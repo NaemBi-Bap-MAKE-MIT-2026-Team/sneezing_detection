@@ -1,0 +1,23 @@
+# Real-time Sneeze Detection System - Python Dependencies
+
+# Deep Learning
+torch>=2.0.0
+numpy>=1.24.0
+
+# Audio Processing
+librosa>=0.10.0
+soundfile>=0.12.1
+pyaudio>=0.2.13
+
+# Scientific Computing
+scipy>=1.10.0
+
+# Optional: For visualization and monitoring
+# matplotlib>=3.7.0
+# tqdm>=4.65.0
+
+# Optional: For ONNX model support (faster inference)
+# onnxruntime>=1.15.0
+
+# Optional: For performance profiling
+# line_profiler>=4.0.0
