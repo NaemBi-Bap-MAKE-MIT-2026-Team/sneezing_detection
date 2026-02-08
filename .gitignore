@@ -112,6 +112,13 @@ MS-SNSD/
 MS-SNSD-NOISE/
 1297-Hours-Scene-Noise-Data-by-Voice-Recorder/
 esc-50/
+datasets/
+!datasets/.gitkeep
+
+# Model checkpoints & fine-tuned models
+models/
+fine_tuned_model/
+!models/.gitkeep
 
 # Claude
 .claude/
