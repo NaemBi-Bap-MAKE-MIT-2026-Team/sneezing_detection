@@ -47,6 +47,7 @@ models/*.onnx
 *.mp3
 *.flac
 *.ogg
+*.zip
 datasets/*.wav
 detected_sneezes/*.wav
 !datasets/.gitkeep
@@ -82,7 +83,6 @@ temp/
 *.pkl
 *.pickle
 *.npy
-*.npz
 
 # Documentation builds
 docs/_build/
@@ -122,3 +122,10 @@ fine_tuned_model/
 
 # Claude
 .claude/
+
+# model & data outputs
+detected_wavs/
+*.dat
+*.keras
+*.tflite
+*.npz

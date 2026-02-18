@@ -1,4 +1,0 @@
-pandas
-librosa
-paplotlib
-scikit-learn
