@@ -11,8 +11,8 @@ import sounddevice as sd
 # =========================
 # 사용자 설정
 # =========================
-TFLITE_PATH = Path(r".\v4_model.tflite")
-STATS_PATH  = Path(r".\v4_norm_stats.npz")
+TFLITE_PATH = Path("v4_model.tflite")
+STATS_PATH  = Path("v4_norm_stats.npz")
 
 INPUT_DEVICE = None      # 장치 번호. 모르겠으면 None (기본 장치)
 CAPTURE_SR   = 48000     # Windows 안정용(장치가 16k 안정 지원하면 16000 추천)

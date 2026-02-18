@@ -16,8 +16,8 @@ import soundfile as sf
 # =========================
 # 사용자 설정
 # =========================
-TFLITE_PATH = Path(r".\v4_model.tflite")
-STATS_PATH  = Path(r".\v4_norm_stats.npz")
+TFLITE_PATH = Path("v4_model.tflite")
+STATS_PATH  = Path("v4_norm_stats.npz")
 
 INPUT_DEVICE = None
 CAPTURE_SR   = 48000
