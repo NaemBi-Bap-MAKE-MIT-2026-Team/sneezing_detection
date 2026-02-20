@@ -12,6 +12,9 @@ downstream code.
   AudioSender        — sends MicrophoneStream frames over UDP to NetworkMicStream
 """
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 from microphone import MicrophoneStream
 from .recv import NetworkMicStream
 from .send import AudioSender

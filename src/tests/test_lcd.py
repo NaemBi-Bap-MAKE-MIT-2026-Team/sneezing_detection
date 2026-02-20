@@ -1,46 +1,45 @@
 """
 tests/test_lcd.py
 ------------------
-LCD display test script.
+LCD 디스플레이 테스트 스크립트.
 
-Displays images (jpg/png/gif) found in src/output_feature/images/
-on the LCD in alphabetical order.
+src/output_feature/images/ 안의 이미지(jpg/png/gif)를 순서대로 LCD에 띄웁니다.
 
-GIF handling
--------------
-- GIF files use their embedded per-frame duration automatically.
-- Specifying --interval overrides the native GIF timing.
-- jpg/png always use --interval (default 0.3 s).
+GIF 처리
+--------
+- GIF는 내장된 프레임별 duration을 자동으로 읽어 적용합니다.
+- --interval 을 지정하면 GIF 원본 타이밍을 override합니다.
+- jpg/png 는 항상 --interval (기본 0.3초) 을 사용합니다.
 
 Run from src/:
     python tests/test_lcd.py
 
 Arguments
 ---------
---interval   Frame interval in seconds.  GIF: native timing if omitted.
-                                         jpg/png: default 0.3
---loops      Total repeat count.         default: 0 (infinite)
---images     List of file paths to show. default: auto-scan output_feature/images/
---once       Display each file once in order, then exit.
+--interval   프레임 간격 (초)  GIF: 미지정 시 GIF 원본 타이밍 사용
+                               jpg/png: default 0.3
+--loops      전체 반복 횟수    default: 0 (무한)
+--images     표시할 파일 경로 목록  default: output_feature/images/ 자동 탐색
+--once       한 번씩만 순서대로 출력 후 종료
 
 Examples
 --------
-# Default run (0.3 s interval, infinite loop)
+# 기본 실행 (0.3초 간격, 무한 루프)
 python tests/test_lcd.py
 
-# GIF file — use embedded timing
+# GIF 파일 — 내장 타이밍 사용
 python tests/test_lcd.py --images output_feature/images/animation.gif
 
-# Override GIF timing (fixed 0.2 s)
+# GIF 타이밍 override (0.2초 고정)
 python tests/test_lcd.py --images output_feature/images/animation.gif --interval 0.2
 
-# Mix jpg + gif
+# jpg + gif 혼합
 python tests/test_lcd.py --images output_feature/images/idle.jpg output_feature/images/anim.gif
 
-# Display once then exit
+# 한 번만 출력하고 종료
 python tests/test_lcd.py --once
 
-# Repeat 3 times
+# 3회 반복
 python tests/test_lcd.py --loops 3
 """
 
@@ -56,18 +55,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PIL import Image, ImageSequence
 from output_feature.lcd_output import LCD
 
-# Default image directory (src/output_feature/images/)
+# 기본 이미지 디렉터리 (src/output_feature/images/)
 _DEFAULT_IMAGE_DIR = Path(__file__).resolve().parent.parent / "output_feature" / "images"
 
-# Supported extensions
+# 지원 확장자
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
 
-# Type alias: (PIL.Image, duration_sec) pair
+# (PIL.Image, duration_sec) 쌍의 타입
 _Frame = tuple[Image.Image, float]
 
 
 # ---------------------------------------------------------------------- #
-# Image loaders                                                           #
+# 이미지 로더                                                             #
 # ---------------------------------------------------------------------- #
 
 def _resize(img: Image.Image) -> Image.Image:
@@ -75,9 +74,9 @@ def _resize(img: Image.Image) -> Image.Image:
 
 
 def _load_gif(path: Path, override_sec: Optional[float]) -> list[_Frame]:
-    """Open a GIF and return a list of (frame, duration_sec) pairs.
+    """GIF를 열고 (프레임, duration) 리스트를 반환합니다.
 
-    If override_sec is given, it replaces the GIF's embedded timing.
+    override_sec 가 주어지면 GIF 내장 타이밍 대신 해당 값을 사용합니다.
     """
     gif = Image.open(path)
     result: list[_Frame] = []
@@ -90,7 +89,7 @@ def _load_gif(path: Path, override_sec: Optional[float]) -> list[_Frame]:
 
 
 def _load_static(path: Path, interval_sec: float) -> list[_Frame]:
-    """Open a static image (jpg/png etc.) and return a [(frame, duration_sec)] list."""
+    """jpg/png 등 정지 이미지를 열고 (프레임, duration) 리스트를 반환합니다."""
     if not path.exists():
         raise FileNotFoundError(path)
     img = _resize(Image.open(path))
@@ -102,7 +101,7 @@ def _build_playlist(
     interval_override: Optional[float],
     static_interval: float,
 ) -> list[tuple[str, int, int, _Frame]]:
-    """Return a list of (filename, frame_no, total_frames, (img, duration_sec)) tuples."""
+    """(파일명, 프레임번호, 전체프레임수, (img, duration)) 리스트를 반환합니다."""
     playlist = []
     for path in paths:
         if path.suffix.lower() == ".gif":
@@ -117,7 +116,7 @@ def _build_playlist(
 
 
 def _collect_images(image_dir: Path) -> list[Path]:
-    """Collect supported image files from a directory, sorted by name."""
+    """디렉터리에서 지원 파일을 이름 순으로 수집합니다."""
     return sorted(
         p for p in image_dir.iterdir()
         if p.suffix.lower() in _IMAGE_EXTENSIONS
@@ -125,32 +124,32 @@ def _collect_images(image_dir: Path) -> list[Path]:
 
 
 # ---------------------------------------------------------------------- #
-# Main                                                                    #
+# 메인                                                                    #
 # ---------------------------------------------------------------------- #
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="LCD image slideshow test")
+    ap = argparse.ArgumentParser(description="LCD 이미지 슬라이드쇼 테스트")
     ap.add_argument(
         "--interval", type=float, default=None,
-        help="Frame interval (seconds). GIF: uses native timing if omitted. "
-             "jpg/png: 0.3 s if omitted.",
+        help="프레임 간격 (초). GIF: 미지정 시 GIF 내장 타이밍 사용. "
+             "jpg/png: 미지정 시 0.3초",
     )
     ap.add_argument(
         "--loops", type=int, default=0,
-        help="Repeat count (0 = infinite).  default: 0",
+        help="반복 횟수 (0 = 무한)  default: 0",
     )
     ap.add_argument(
         "--images", nargs="+", default=None,
-        help="List of file paths to display. Auto-scans output_feature/images/ if omitted.",
+        help="표시할 파일 경로 목록. 미지정 시 output_feature/images/ 자동 탐색",
     )
     ap.add_argument(
         "--once", action="store_true",
-        help="Display each file once in order, then exit.",
+        help="한 번씩 순서대로 출력하고 종료",
     )
     args = ap.parse_args()
 
     # ------------------------------------------------------------------ #
-    # Build file list                                                     #
+    # 파일 목록 구성                                                      #
     # ------------------------------------------------------------------ #
     if args.images:
         paths = [Path(p) for p in args.images]
@@ -158,35 +157,35 @@ def main() -> None:
         paths = _collect_images(_DEFAULT_IMAGE_DIR)
 
     if not paths:
-        print(f"[ERROR] No image files found in: {_DEFAULT_IMAGE_DIR}")
+        print(f"[ERROR] 이미지 파일을 찾을 수 없습니다: {_DEFAULT_IMAGE_DIR}")
         sys.exit(1)
 
-    print("File list:")
+    print("파일 목록:")
     for p in paths:
         tag = "GIF" if p.suffix.lower() == ".gif" else "img"
         print(f"  [{tag}] {p.name}")
 
     # ------------------------------------------------------------------ #
-    # Build playlist                                                      #
+    # 플레이리스트 생성                                                   #
     # ------------------------------------------------------------------ #
     static_interval = args.interval if args.interval is not None else 0.3
 
-    print("Loading frames...")
+    print("프레임 로드 중...")
     playlist = _build_playlist(paths, args.interval, static_interval)
 
     n_files  = len(paths)
     n_frames = len(playlist)
     timing   = f"interval={args.interval}s (override)" if args.interval is not None \
-               else "GIF native timing / static images 0.3 s"
-    print(f"Loaded.  {n_files} file(s) -> {n_frames} frame(s)  [{timing}]")
+               else "GIF 원본 타이밍 / 정지이미지 0.3s"
+    print(f"로드 완료.  {n_files}개 파일 → {n_frames} 프레임  [{timing}]")
 
     # ------------------------------------------------------------------ #
-    # Initialise LCD                                                      #
+    # LCD 초기화                                                          #
     # ------------------------------------------------------------------ #
     lcd = LCD()
 
     # ------------------------------------------------------------------ #
-    # Slideshow                                                           #
+    # 슬라이드쇼                                                          #
     # ------------------------------------------------------------------ #
     def _show_frame(idx: int, total: int, name: str, fno: int, ftot: int,
                     img: Image.Image, dur: float) -> None:
@@ -198,15 +197,15 @@ def main() -> None:
     total = len(playlist)
 
     if args.once:
-        print("Displaying once then exiting.")
+        print("1회 출력 후 종료합니다.")
         for i, (name, fno, ftot, (img, dur)) in enumerate(playlist):
             _show_frame(i, total, name, fno, ftot, img, dur)
-        print("\nDone.")
+        print("\n완료.")
         return
 
     loop_count  = 0
     frame_count = 0
-    print("Press Ctrl+C to stop.")
+    print("Ctrl+C 로 종료합니다.")
     try:
         while args.loops == 0 or loop_count < args.loops:
             for i, (name, fno, ftot, (img, dur)) in enumerate(playlist):
@@ -216,7 +215,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
 
-    print(f"\nStopped.  {loop_count} loop(s) / {frame_count} frame(s) displayed.")
+    print(f"\n종료.  {loop_count}회 루프 / 총 {frame_count} 프레임 출력.")
 
 
 if __name__ == "__main__":
