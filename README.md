@@ -77,6 +77,81 @@ python main.py
 
 For detailed usage, see [`realtime_detection/README.md`](realtime_detection/README.md).
 
+---
+
+## 🍓 Raspberry Pi 4 환경 설정
+
+### 권장 Python 버전: 3.12.x
+
+> **⚠️ Python 3.13 비호환**
+> Python 3.13에서 `imp` 모듈이 제거되어 `tensorflow` 및 `tflite-runtime`이 동작하지 않습니다.
+> Python 3.12 가상환경(`base`)을 사용하면 이 문제를 원천 차단할 수 있습니다.
+
+---
+
+### 자동 설치 (권장)
+
+프로젝트 루트의 `setup_rpi4.sh` 스크립트가 아래 작업을 자동으로 수행합니다:
+- 기존 `base` 가상환경 초기화 (제거 후 재생성)
+- Python 3.12 미설치 시 apt 자동 설치
+- `base` 가상환경 생성 및 패키지 일괄 설치
+
+```bash
+# 1. 스크립트 실행 권한 부여 및 실행
+chmod +x setup_rpi4.sh
+./setup_rpi4.sh
+
+# 2. 가상환경 활성화
+source base/bin/activate
+
+# 3. 실행 (LCD 없이)
+cd src
+python main.py --no-lcd
+
+# 4. 실행 (ST7789 LCD 포함 시 st7789 추가 설치)
+pip install st7789
+python main.py
+```
+
+---
+
+### 수동 설치
+
+```bash
+# Python 3.12 설치 (Raspberry Pi OS Bookworm)
+sudo apt update
+sudo apt install -y python3.12 python3.12-venv python3.12-dev
+
+# 가상환경 생성 (이름: base)
+python3.12 -m venv base
+source base/bin/activate
+
+# 패키지 설치
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 실행
+cd src
+python main.py --no-lcd
+```
+
+---
+
+### 의존 패키지 구성 (src/main.py)
+
+| 패키지 | 역할 | 비고 |
+|--------|------|------|
+| `ai-edge-litert>=2.1.2` | TFLite 추론 런타임 | `tflite-runtime` 후속, Python 3.12 aarch64 지원 |
+| `librosa>=0.10.0` | log-mel spectrogram 추출 | 오디오 feature 추출 |
+| `sounddevice>=0.4.6` | 마이크 입력 / 스피커 출력 | |
+| `numpy>=1.24.0` | 수치 연산 | |
+| `scipy>=1.10.0` | 신호 처리 | librosa 의존성 |
+| `soundfile>=0.12.1` | 오디오 파일 I/O | librosa 의존성 |
+| `Pillow>=9.0.0` | LCD 이미지 처리 | ST7789 디스플레이 |
+| `st7789` | ST7789 LCD 드라이버 | 선택사항, LCD 사용 시만 설치 |
+
+---
+
 ## 📊 Model Performance
 
 ### Training Results
