@@ -17,17 +17,20 @@ from ml_model import config as cfg
 from microphone import MicrophoneStream
 from output_feature import SpeakerOutput
 
+print(f"STARTING SNEEZE DETECTOR (model: {cfg.TFLITE_PATH})")
 
 def main():
     # ------------------------------------------------------------------ #
     # Initialise model and normalisation stats                            #
     # ------------------------------------------------------------------ #
+    print(f"Loading model and stats...")
     mu, sdv = load_stats(cfg.STATS_PATH)
     model   = LiteModel(cfg.TFLITE_PATH)
 
     # ------------------------------------------------------------------ #
     # Initialise microphone and output modules                            #
     # ------------------------------------------------------------------ #
+    print(f"Starting microphone...")
     mic    = MicrophoneStream(
         capture_sr  = cfg.CAPTURE_SR,
         frame_sec   = cfg.FRAME_SEC,
@@ -36,6 +39,7 @@ def main():
     )
     output = SpeakerOutput(playback_sr=cfg.MODEL_SR)
 
+    print(f"Configuration: CAPTURE_SR={cfg.CAPTURE_SR}, FRAME_SEC={cfg.FRAME_SEC}, PRE_SECONDS={cfg.PRE_SECONDS}, INPUT_DEVICE={cfg.INPUT_DEVICE}")
     target_samples_capture = int(cfg.CAPTURE_SR * cfg.CLIP_SECONDS)
 
     capturing    = False
