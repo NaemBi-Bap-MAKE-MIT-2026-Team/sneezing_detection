@@ -10,9 +10,15 @@
 # ──────────────────────────────────────────
 # TFLite 추론
 # 전체 TensorFlow 불필요 — aarch64 경량 런타임 사용
-# (Python 3.9 / 3.10 / 3.11 지원)
+#
+# tflite-runtime   : Python 3.9~3.11 지원 (구버전)
+# ai-edge-litert   : tflite-runtime 후속 패키지
+#                    Python 3.10~3.13 + aarch64 공식 지원 (v2.1.2+)
+#
+# Python 3.13에서는 imp 모듈 제거로 tflite-runtime 및 tensorflow가
+# 동작하지 않으므로 ai-edge-litert 를 사용해야 합니다.
 # ──────────────────────────────────────────
-tflite-runtime==2.14.0
+ai-edge-litert>=2.1.2
 
 # ──────────────────────────────────────────
 # 수치 연산
