@@ -1,99 +1,39 @@
-absl-py==2.4.0
-asttokens @ file:///home/conda/feedstock_root/build_artifacts/asttokens_1763409923949/work
-astunparse==1.6.3
-audioread==3.1.0
-certifi==2026.1.4
-cffi==2.0.0
-charset-normalizer==3.4.4
-colorama @ file:///home/conda/feedstock_root/build_artifacts/colorama_1733218098505/work
-comm @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_comm_1753453984/work
-contourpy==1.3.3
-cycler==0.12.1
-debugpy @ file:///D:/bld/bld/rattler-build_debugpy_1769745013/work
-decorator @ file:///home/conda/feedstock_root/build_artifacts/decorator_1740384970518/work
-executing @ file:///home/conda/feedstock_root/build_artifacts/executing_1756729339227/work
-filelock==3.20.3
-flatbuffers==25.12.19
-fonttools==4.61.1
-fsspec==2026.2.0
-gast==0.7.0
-google-pasta==0.2.0
-grpcio==1.78.0
-h5py==3.15.1
-idna==3.11
-ipykernel @ file:///D:/bld/bld/rattler-build_ipykernel_1770405749/work
-ipython @ file:///D:/bld/bld/rattler-build_ipython_1770040952/work
-ipython_pygments_lexers @ file:///home/conda/feedstock_root/build_artifacts/ipython_pygments_lexers_1737123620466/work
-jedi @ file:///home/conda/feedstock_root/build_artifacts/jedi_1733300866624/work
-Jinja2==3.1.6
-joblib==1.5.3
-jupyter_client @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_jupyter_client_1767954655/work
-jupyter_core @ file:///D:/bld/bld/rattler-build_jupyter_core_1760643889/work
-keras==3.13.2
-kiwisolver==1.4.9
-lazy_loader==0.4
-libclang==18.1.1
-librosa==0.11.0
-llvmlite==0.46.0
-Markdown==3.10.1
-markdown-it-py==4.0.0
-MarkupSafe==3.0.3
-matplotlib==3.10.8
-matplotlib-inline @ file:///home/conda/feedstock_root/build_artifacts/matplotlib-inline_1761214490209/work
-mdurl==0.1.2
-ml_dtypes==0.5.4
-mpmath==1.3.0
-msgpack==1.1.2
-namex==0.1.0
-nest_asyncio @ file:///home/conda/feedstock_root/build_artifacts/nest-asyncio_1733325553580/work
-networkx==3.6.1
-numba==0.63.1
-numpy==2.3.5
-opt_einsum==3.4.0
-optree==0.18.0
-packaging @ file:///C:/miniconda3/conda-bld/packaging_1761049137378/work
-pandas==3.0.0
-parso @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_parso_1755974222/work
-pillow==12.1.0
-platformdirs @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_platformdirs_1764950726/work
-pooch==1.9.0
-prompt_toolkit @ file:///home/conda/feedstock_root/build_artifacts/prompt-toolkit_1756321756983/work
-protobuf==6.33.5
-psutil @ file:///D:/bld/bld/rattler-build_psutil_1769678170/work
-pure_eval @ file:///home/conda/feedstock_root/build_artifacts/pure_eval_1733569405015/work
-PyAudio==0.2.14
-pycparser==3.0
-Pygments @ file:///home/conda/feedstock_root/build_artifacts/pygments_1750615794071/work
-pyparsing==3.3.2
-PyPDF2==3.0.1
-python-dateutil @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_python-dateutil_1751104122/work
-pywin32 @ file:///D:/bld/bld/rattler-build_pywin32_1756487136/work
-pyzmq @ file:///D:/bld/bld/rattler-build_pyzmq_1757387025/work
-requests==2.32.5
-resampy==0.4.3
-rich==14.3.2
-scikit-learn==1.6.1
-scipy==1.17.0
-setuptools==80.10.2
-six @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_six_1753199211/work
-sounddevice==0.5.5
-soundfile==0.13.1
-soxr==1.0.0
-stack_data @ file:///home/conda/feedstock_root/build_artifacts/stack_data_1733569443808/work
-sympy==1.14.0
-tensorboard==2.20.0
-tensorboard-data-server==0.7.2
-tensorflow==2.20.0
-termcolor==3.3.0
-threadpoolctl==3.6.0
-torch==2.10.0
-tornado @ file:///D:/bld/tornado_1765836408115/work
-tqdm==4.67.3
-traitlets @ file:///home/conda/feedstock_root/build_artifacts/traitlets_1733367359838/work
-typing_extensions @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_typing_extensions_1756220668/work
-tzdata==2025.3
-urllib3==2.6.3
-wcwidth @ file:///home/conda/feedstock_root/build_artifacts/wcwidth_1769858610910/work
-Werkzeug==3.1.5
-wheel==0.46.3
-wrapt==2.1.1
+# ============================================================
+# Sneezing Detection — Python Dependencies
+# Target: Raspberry Pi (Python 3.9+)
+# ============================================================
+
+# ── Core numerical computing ─────────────────────────────────
+numpy>=1.24.0
+
+# ── Audio processing ─────────────────────────────────────────
+# mel-spectrogram, resampling (preprocessing.py)
+librosa>=0.10.0
+soundfile>=0.12.1
+
+# microphone input / speaker output (mic_input.py, speaker_output.py)
+sounddevice>=0.4.6
+
+# ── Image processing (LCD + GIF) ─────────────────────────────
+# PIL.ImageSequence used for GIF frame extraction (lcd_output.py)
+Pillow>=9.0.0
+
+# ── TFLite inference ─────────────────────────────────────────
+# Raspberry Pi: prefer the lighter tflite-runtime wheel.
+# Install via:
+#   pip install tflite-runtime
+# or download a prebuilt wheel from:
+#   https://github.com/google-coral/pycoral/releases
+#
+# Other platforms (x86 dev machine): fall back to full TensorFlow.
+#   pip install tensorflow
+#
+# model.py tries tflite-runtime first; if unavailable it falls
+# back to tensorflow.lite.Interpreter automatically.
+# tflite-runtime>=2.13.0   # uncomment for Raspberry Pi
+tensorflow>=2.13.0          # comment out on Raspberry Pi to save space
+
+# ── LCD driver (Raspberry Pi only) ───────────────────────────
+# ST7789 240×240 SPI display driver used by lcd_output.py.
+# Not available on non-RPi platforms — safe to skip for dev/testing.
+# st7789>=0.0.4             # uncomment when deploying on Raspberry Pi

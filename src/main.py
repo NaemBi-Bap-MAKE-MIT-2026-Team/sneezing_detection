@@ -11,8 +11,16 @@ Wires together:
 Asset directory layout (matches raspi/sneeze-detection/):
   ~/Documents/sneeze-detection/
     images/  idle.png  detect1.png  detect2.png  detect3.png
+             (.gif files are also supported: idle.gif, detect.gif, etc.)
     sounds/  bless_you.wav
     weights/ v4_model.tflite  v4_norm_stats.npz
+
+GIF support
+-----------
+Replace the idle/detect filenames under IMAGES_DIR with .gif files to
+play them with their embedded per-frame timing automatically.
+  - idle GIF    : loops continuously after LCD initialisation.
+  - detect GIF  : plays once on sneeze detection, then returns to idle.
 
 Usage
 -----
