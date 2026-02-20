@@ -1,0 +1,39 @@
+# ============================================================
+# Sneezing Detection — Python Dependencies
+# Target: Raspberry Pi (Python 3.9+)
+# ============================================================
+
+# ── Core numerical computing ─────────────────────────────────
+numpy>=1.24.0
+
+# ── Audio processing ─────────────────────────────────────────
+# mel-spectrogram, resampling (preprocessing.py)
+librosa>=0.10.0
+soundfile>=0.12.1
+
+# microphone input / speaker output (mic_input.py, speaker_output.py)
+sounddevice>=0.4.6
+
+# ── Image processing (LCD + GIF) ─────────────────────────────
+# PIL.ImageSequence used for GIF frame extraction (lcd_output.py)
+Pillow>=9.0.0
+
+# ── TFLite inference ─────────────────────────────────────────
+# Raspberry Pi: prefer the lighter tflite-runtime wheel.
+# Install via:
+#   pip install tflite-runtime
+# or download a prebuilt wheel from:
+#   https://github.com/google-coral/pycoral/releases
+#
+# Other platforms (x86 dev machine): fall back to full TensorFlow.
+#   pip install tensorflow
+#
+# model.py tries tflite-runtime first; if unavailable it falls
+# back to tensorflow.lite.Interpreter automatically.
+# tflite-runtime>=2.13.0   # uncomment for Raspberry Pi
+tensorflow>=2.13.0          # comment out on Raspberry Pi to save space
+
+# ── LCD driver (Raspberry Pi only) ───────────────────────────
+# ST7789 240×240 SPI display driver used by lcd_output.py.
+# Not available on non-RPi platforms — safe to skip for dev/testing.
+# st7789>=0.0.4             # uncomment when deploying on Raspberry Pi
