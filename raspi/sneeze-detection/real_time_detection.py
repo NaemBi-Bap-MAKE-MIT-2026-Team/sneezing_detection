@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # real_time_detection.py
-# 요구사항:
-# - 2초 윈도우 + 0.5초 훕으로 실시간 추론
-# - 탐지되면 터미널에 "Bless you!"만 출력
-# - LCD: idle 1프레임(기본) + 탐지 순간 detect1->detect2->detect3 연속 재생(필수)
-# - 사운드: sounds/bless_you.wav 재생(필수)
+# Requirements:
+# - 2-second window + 0.5-second hop for real-time inference
+# - On detection, print "Bless you!" to terminal
+# - LCD: idle frame (default) + on detection play detect1->detect2->detect3 sequentially (required)
+# - Sound: play sounds/bless_you.wav (required)
 #
-# 폴더 구조:
+# Directory layout:
 # ~/Documents/sneeze-detection/
 #   images/idle.png detect1.png detect2.png detect3.png
 #   sounds/bless_you.wav
@@ -27,7 +27,7 @@ from PIL import Image
 
 
 # =========================
-# 모델/전처리 설정 (bench_e2e.py 기반)
+# Model / preprocessing config (based on bench_e2e.py)
 # =========================
 MODEL_SR = 16000
 CLIP_SECONDS = 2.0
@@ -101,7 +101,7 @@ def preproc(y16: np.ndarray, mu: np.ndarray, sdv: np.ndarray) -> np.ndarray:
 
 
 def load_interpreter(model_path: Path):
-    # 우선순위: ai_edge_litert -> tflite_runtime -> tensorflow
+    # Priority: ai_edge_litert -> tflite_runtime -> tensorflow
     try:
         from ai_edge_litert.interpreter import Interpreter as TFLiteInterpreter
         interp = TFLiteInterpreter(model_path=str(model_path))
@@ -121,18 +121,18 @@ def load_interpreter(model_path: Path):
         interp = tf.lite.Interpreter(model_path=str(model_path))
         return interp
     except Exception as e:
-        raise RuntimeError(f"TFLite Interpreter 로드 실패: {e}") from e
+        raise RuntimeError(f"Failed to load TFLite Interpreter: {e}") from e
 
 
 # =========================
-# LCD (필수)
+# LCD (required)
 # =========================
 class LCD:
     def __init__(self):
         try:
             import st7789
         except Exception as e:
-            raise RuntimeError(f"LCD 드라이버(st7789) import 실패: {e}")
+            raise RuntimeError(f"LCD driver (st7789) import failed: {e}")
 
         self.disp = st7789.ST7789(
             rotation=90,
@@ -154,7 +154,7 @@ def load_frame(path: Path) -> Image.Image:
 
 
 # =========================
-# 사운드 재생 (필수)
+# Sound playback (required)
 # =========================
 def play_wav_aplay(wav_path: Path, device: str | None):
     if not wav_path.exists():
@@ -167,7 +167,7 @@ def play_wav_aplay(wav_path: Path, device: str | None):
 
 
 # =========================
-# 링버퍼(모노)
+# Ring buffer (mono)
 # =========================
 class RingBuffer:
     def __init__(self, capacity_samples: int):
@@ -222,7 +222,7 @@ class RingBuffer:
 
 
 # =========================
-# 메인
+# Main
 # =========================
 def main():
     base_dir = Path.home() / "Documents" / "sneeze-detection"
@@ -231,20 +231,20 @@ def main():
     sounds_dir = base_dir / "sounds"
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--input-device", default=None, help="sounddevice 입력 장치 인덱스 또는 이름(없으면 기본)")
+    ap.add_argument("--input-device", default=None, help="sounddevice input device index or name (system default if omitted)")
     ap.add_argument("--capture-sr", type=int, default=48000)
     ap.add_argument("--channels", type=int, default=1)
     ap.add_argument("--block-sec", type=float, default=0.02)   # 20ms
     ap.add_argument("--hop-sec", type=float, default=0.50)     # 0.5s hop
-    ap.add_argument("--rms-gate", type=float, default=0.008)   # 너무 조용하면 추론 스킵
+    ap.add_argument("--rms-gate", type=float, default=0.008)   # skip inference if too quiet
     ap.add_argument("--prob-th", type=float, default=0.90)
     ap.add_argument("--cooldown-sec", type=float, default=1.5)
 
-    ap.add_argument("--aplay-device", default=None, help="aplay -D 장치(예: hw:0,0). 없으면 default")
+    ap.add_argument("--aplay-device", default=None, help="aplay -D device (e.g. hw:0,0). System default if omitted.")
     ap.add_argument("--anim-fps", type=float, default=12.0)
     args = ap.parse_args()
 
-    # 필수 파일
+    # Required files
     tflite_path = weights_dir / "v4_model.tflite"
     stats_path = weights_dir / "v4_norm_stats.npz"
     bless_path = sounds_dir / "bless_you.wav"
@@ -256,9 +256,9 @@ def main():
 
     for p in [tflite_path, stats_path, bless_path, idle_path, d1_path, d2_path, d3_path]:
         if not p.exists():
-            raise FileNotFoundError(f"필수 파일 없음: {p}")
+            raise FileNotFoundError(f"Required file not found: {p}")
 
-    # 로딩
+    # Loading
     mu, sdv = load_stats(stats_path)
     interp = load_interpreter(tflite_path)
     interp.allocate_tensors()
@@ -269,10 +269,10 @@ def main():
     idle = load_frame(idle_path)
     detect_frames = [load_frame(d1_path), load_frame(d2_path), load_frame(d3_path)]
 
-    # idle 1회 표시
+    # Show idle frame once
     lcd.show(idle)
 
-    # 오디오 입력 준비
+    # Audio input setup
     input_device = args.input_device
     if input_device is not None:
         try:
@@ -285,7 +285,7 @@ def main():
     blocksize = int(max(1, round(capture_sr * float(args.block_sec))))
 
     need_samples = int(capture_sr * CLIP_SECONDS)
-    ring_cap = int(capture_sr * (CLIP_SECONDS + 1.0))  # 3초 버퍼
+    ring_cap = int(capture_sr * (CLIP_SECONDS + 1.0))  # 3-second buffer
     ring = RingBuffer(ring_cap)
 
     q = queue.Queue(maxsize=80)
@@ -300,7 +300,7 @@ def main():
         except queue.Full:
             pass
 
-    # 이벤트 실행은 중복 방지
+    # Prevent duplicate event execution
     event_lock = threading.Lock()
     event_active = False
 
@@ -312,22 +312,22 @@ def main():
             event_active = True
 
         try:
-            # LCD 애니메이션: detect1 -> detect2 -> detect3 (fps 기준)
+            # LCD animation: detect1 -> detect2 -> detect3 (based on fps)
             dt = 1.0 / max(1.0, float(args.anim_fps))
             for fr in detect_frames:
                 lcd.show(fr)
                 time.sleep(dt)
 
-            # 음원 재생
+            # Sound playback
             play_wav_aplay(bless_path, args.aplay_device)
 
         finally:
-            # idle 복귀
+            # Return to idle
             lcd.show(idle)
             with event_lock:
                 event_active = False
 
-    # 스케줄링
+    # Scheduling
     hop_sec = float(args.hop_sec)
     next_infer_t = time.time() + hop_sec
     ignore_until = 0.0
