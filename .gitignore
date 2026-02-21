@@ -123,6 +123,10 @@ fine_tuned_model/
 # Claude
 .claude/
 
+# API Keys
+.env
+src/.env
+
 # model & data outputs
 detected_wavs/
 *.dat

@@ -29,6 +29,14 @@ from pathlib import Path
 
 import numpy as np
 
+# .env 파일 자동 로드 (python-dotenv 설치 시)
+# src/.env 에 GEMINI_API_KEY, ELEVENLABS_API_KEY 를 작성하세요.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass
+
 from ml_model import LiteModel, load_stats, preproc, resample_to_model_sr, rms
 from ml_model import config as cfg
 from communication import MicrophoneStream, NetworkMicStream

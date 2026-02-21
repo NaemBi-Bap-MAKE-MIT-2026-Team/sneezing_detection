@@ -1,17 +1,25 @@
 """
 connection/weather/weather.py
 ------------------------------
-Open-Meteo API를 사용하여 날씨 및 대기질 데이터를 조회합니다.
-(완전 무료, API 키 불필요)
+날씨 및 대기질 데이터를 조회합니다.
+
+- Open-Meteo  : 기온, 습도, 풍속, PM10, PM2.5, US AQI (무료, API 키 불필요)
+- wttr.in     : 날씨 상태 설명 및 어제 대비 기온 변화 (무료, API 키 불필요)
 
 Usage
 -----
 fetcher = WeatherFetcher()
+
+# 기본 (Open-Meteo만)
 data = fetcher.get_context(lat=37.56, lon=126.97)
+
+# wttr.in 포함 (더 풍부한 날씨 설명 + 어제 대비 기온 변화)
+data = fetcher.get_context(lat=37.56, lon=126.97, city="Seoul")
 # {
 #   "temperature": 5.0, "humidity": 70, "weather_label": "Partly cloudy",
 #   "wind_speed": 3.2, "pm2_5": 35.0, "pm10": 45.0,
-#   "us_aqi": 35, "aqi_label": "Good"
+#   "us_aqi": 35, "aqi_label": "Good",
+#   "temp_change_yesterday": "+2.5°C"   # city 제공 시 추가
 # }
 """
 
@@ -73,26 +81,34 @@ class WeatherFetcher:
         if not _REQUESTS_AVAILABLE:
             print("[WeatherFetcher] ⚠ requests 패키지 없음. pip install requests 를 실행하세요.")
 
-    def get_context(self, lat: float, lon: float) -> Optional[dict]:
+    def get_context(
+        self,
+        lat: float,
+        lon: float,
+        city: Optional[str] = None,
+    ) -> Optional[dict]:
         """위도/경도로 날씨 + 대기질 정보를 조회합니다.
 
         Parameters
         ----------
-        lat : 위도
-        lon : 경도
+        lat  : 위도
+        lon  : 경도
+        city : 도시 이름 (선택). 제공 시 wttr.in으로 날씨 상태 설명과
+               어제 대비 기온 변화를 추가로 조회합니다.
 
         Returns
         -------
         dict | None
             성공 시: {
-                "temperature": float,       # 섭씨 온도
-                "humidity": int,            # 상대습도 (%)
-                "weather_label": str,       # WMO 코드 기반 날씨 설명
-                "wind_speed": float,        # 풍속 (km/h)
-                "pm2_5": float,             # PM2.5 (µg/m³)
-                "pm10": float,              # PM10 (µg/m³)
-                "us_aqi": int,              # US AQI 지수
-                "aqi_label": str,           # AQI 등급 레이블
+                "temperature": float,           # 섭씨 온도
+                "humidity": int,                # 상대습도 (%)
+                "weather_label": str,           # 날씨 설명
+                "wind_speed": float,            # 풍속 (km/h)
+                "pm2_5": float,                 # PM2.5 (µg/m³)
+                "pm10": float,                  # PM10 (µg/m³)
+                "us_aqi": int,                  # US AQI 지수
+                "aqi_label": str,               # AQI 등급 레이블
+                "temp_change_yesterday": str,   # 어제 대비 기온 변화 (city 제공 시)
             }
             실패 시: None
         """
@@ -130,7 +146,43 @@ class WeatherFetcher:
             result["us_aqi"] = None
             result["aqi_label"] = "Unknown"
 
+        # wttr.in 보강: 더 풍부한 날씨 설명 + 어제 대비 기온 변화
+        if city:
+            wttr = self._fetch_wttr(city)
+            if wttr:
+                result["weather_label"] = wttr["condition"]
+                result["temp_change_yesterday"] = wttr["temp_change"]
+
         return result
+
+    def _fetch_wttr(self, city: str) -> Optional[dict]:
+        """wttr.in으로 날씨 상태 설명과 어제 대비 기온 변화를 조회합니다.
+
+        Parameters
+        ----------
+        city : 도시 이름 (예: "Seoul", "Boston")
+
+        Returns
+        -------
+        dict | None
+            {"condition": str, "temp_change": str} 또는 None
+        """
+        url = f"https://wttr.in/{city}?format=j1"
+        try:
+            response = requests.get(url, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+
+            condition = data["current_condition"][0]["weatherDesc"][0]["value"]
+            today_avg = float(data["weather"][1]["avgtempC"])
+            yesterday_avg = float(data["weather"][0]["avgtempC"])
+            temp_diff = round(today_avg - yesterday_avg, 1)
+            temp_change = f"{'+' if temp_diff > 0 else ''}{temp_diff}°C"
+
+            return {"condition": condition, "temp_change": temp_change}
+        except Exception as e:
+            print(f"[WeatherFetcher] ⚠ wttr.in 오류: {e}")
+            return None
 
     def _fetch_weather(self, lat: float, lon: float) -> Optional[dict]:
         """Open-Meteo 날씨 API를 호출합니다."""
@@ -169,7 +221,7 @@ class WeatherFetcher:
 if __name__ == "__main__":
     # 서울 좌표로 셀프 테스트
     fetcher = WeatherFetcher()
-    data = fetcher.get_context(lat=37.56, lon=126.97)
+    data = fetcher.get_context(lat=37.56, lon=126.97, city="Seoul")
     if data:
         print(
             f"[WeatherFetcher] ✓ "
@@ -179,5 +231,7 @@ if __name__ == "__main__":
             f"AQI {data['us_aqi']} ({data['aqi_label']}), "
             f"PM2.5 {data['pm2_5']} µg/m³"
         )
+        if "temp_change_yesterday" in data:
+            print(f"[WeatherFetcher] 어제 대비 기온 변화: {data['temp_change_yesterday']}")
     else:
         print("[WeatherFetcher] ❌ 데이터 조회 실패")

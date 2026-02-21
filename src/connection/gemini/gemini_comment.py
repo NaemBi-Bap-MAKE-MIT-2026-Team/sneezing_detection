@@ -214,16 +214,69 @@ class GeminiCommentGenerator:
                 config=self._gen_config,
             )
             raw_text = response.text.strip()
-            messages = [
-                line.strip()[2:]
-                for line in raw_text.split("\n")
-                if line.strip().startswith("- ")
-            ]
+            messages = self._parse_messages(raw_text, num_messages)
             print(f"[GeminiComment] ✓ {len(messages)}개 메시지 생성 완료")
             return messages
         except Exception as e:
             print(f"[GeminiComment] ❌ 배치 생성 오류: {e}")
             return []
+
+    def _parse_messages(self, raw_text: str, expected_count: int) -> list[str]:
+        """Gemini 응답에서 메시지를 유연하게 파싱합니다.
+
+        여러 형식을 지원합니다:
+        - "- message" (하이픈)
+        - "* message" (별표)
+        - "• message" (점)
+        - "1. message" (숫자+점)
+        - "1) message" (숫자+괄호)
+        - "message" (형식 없음)
+
+        Parameters
+        ----------
+        raw_text : Gemini API 응답 텍스트
+        expected_count : 기대하는 메시지 개수 (형식 검증용)
+
+        Returns
+        -------
+        list[str]
+            파싱된 메시지 리스트
+        """
+        messages = []
+
+        for line in raw_text.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            # 불릿 포인트 형식: "- msg", "* msg", "• msg"
+            if line.startswith(("- ", "* ", "• ")):
+                msg = line[2:].strip()
+                if msg:
+                    messages.append(msg)
+            # 숫자 형식: "1. msg" 또는 "1) msg"
+            elif line and line[0].isdigit():
+                if ". " in line:
+                    msg = line.split(". ", 1)[-1].strip()
+                    if msg:
+                        messages.append(msg)
+                elif ") " in line:
+                    msg = line.split(") ", 1)[-1].strip()
+                    if msg:
+                        messages.append(msg)
+            # 구분자 없는 메시지 (마지막 수단)
+            elif line and not any(
+                line.startswith(prefix)
+                for prefix in ("AI:", "Assis", "System", "User:", "[", "]")
+            ):
+                # 메타 정보처럼 보이지 않으면 메시지로 간주
+                messages.append(line)
+
+        # 요청 개수보다 많으면 자르기
+        if len(messages) > expected_count:
+            messages = messages[:expected_count]
+
+        return messages
 
     def generate(self, language: str = "en", context: Optional[dict] = None) -> str:
         """재채기 후 건강 멘트를 단일 메시지로 생성합니다.

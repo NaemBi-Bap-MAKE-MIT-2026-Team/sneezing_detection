@@ -24,6 +24,14 @@ from pathlib import Path
 # Allow imports from src/
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# .env 파일 자동 로드 (python-dotenv 설치 시)
+# src/.env 에 GEMINI_API_KEY, ELEVENLABS_API_KEY 를 작성하세요.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
+except ImportError:
+    pass
+
 _NO_AUDIO = "--no-audio" in sys.argv
 
 _GEMINI_KEY    = os.environ.get("GEMINI_API_KEY", "")
@@ -55,13 +63,13 @@ def _fail(name: str, err: Exception) -> None:
 # ---------------------------------------------------------------------- #
 
 def test_import_gemini_package():
-    """google-generativeai 패키지 임포트 확인."""
-    name = "import — google-generativeai"
+    """google-genai 패키지 임포트 확인."""
+    name = "import — google-genai"
     try:
-        import google.generativeai  # noqa: F401
+        from google import genai  # noqa: F401
         _pass(name)
     except ImportError as e:
-        _fail(name, ImportError(f"pip install google-generativeai  →  {e}"))
+        _fail(name, ImportError(f"pip install google-genai  →  {e}"))
 
 
 def test_import_elevenlabs_package():
@@ -104,7 +112,7 @@ def test_gemini_generate_english():
         _skip(name, "GEMINI_API_KEY not set")
         return
     try:
-        from connection.llm_command.gemini_comment import GeminiCommentGenerator
+        from connection.gemini.gemini_comment import GeminiCommentGenerator
         gen = GeminiCommentGenerator()
         t0 = time.time()
         text = gen.generate("en")
@@ -125,7 +133,7 @@ def test_gemini_generate_korean():
         _skip(name, "GEMINI_API_KEY not set")
         return
     try:
-        from connection.llm_command.gemini_comment import GeminiCommentGenerator
+        from connection.gemini.gemini_comment import GeminiCommentGenerator
         gen = GeminiCommentGenerator()
         t0 = time.time()
         text = gen.generate("ko")
@@ -142,7 +150,7 @@ def test_gemini_fallback_on_invalid_key():
     """잘못된 API 키 입력 시 fallback 문구를 반환하는지 확인."""
     name = "GeminiCommentGenerator.generate — fallback on invalid key"
     try:
-        from connection.llm_command.gemini_comment import GeminiCommentGenerator, _DEFAULT_FALLBACKS
+        from connection.gemini.gemini_comment import GeminiCommentGenerator, _DEFAULT_FALLBACKS
         gen = GeminiCommentGenerator(api_key="invalid-key-for-test")
         result = gen.generate("en")
 
@@ -239,7 +247,7 @@ def test_bless_you_flow_init():
         _skip(name, "GEMINI_API_KEY 또는 ELEVENLABS_API_KEY not set")
         return
     try:
-        from connection.llm_command.bless_you_flow import BlessYouFlow
+        from connection.bless_you_flow import BlessYouFlow
         flow = BlessYouFlow(bless_wav_path=BLESS_WAV, language="en")
         assert flow is not None
         _pass(name)
@@ -257,7 +265,7 @@ def test_bless_you_flow_run_no_audio():
         _skip(name, "--no-audio 플래그로 재생 건너뜀")
         return
     try:
-        from connection.llm_command.bless_you_flow import BlessYouFlow
+        from connection.bless_you_flow import BlessYouFlow
 
         # 존재하지 않는 WAV 경로로 WAV 재생을 건너뛰고 Gemini + TTS만 검증
         flow = BlessYouFlow(
@@ -378,7 +386,7 @@ def test_gemini_generate_with_context():
         _skip(name, "GEMINI_API_KEY not set")
         return
     try:
-        from connection.llm_command.gemini_comment import GeminiCommentGenerator
+        from connection.gemini.gemini_comment import GeminiCommentGenerator
         gen = GeminiCommentGenerator()
         context = {
             "city": "Seoul", "country": "South Korea",
@@ -395,6 +403,28 @@ def test_gemini_generate_with_context():
         _fail(name, e)
 
 
+def test_gemini_generate_batch():
+    """generate_batch()로 여러 메시지 생성 확인."""
+    name = "GeminiCommentGenerator.generate_batch — returns list"
+    if not _GEMINI_KEY:
+        _skip(name, "GEMINI_API_KEY not set")
+        return
+    try:
+        from connection.gemini.gemini_comment import GeminiCommentGenerator
+        gen = GeminiCommentGenerator()
+        t0 = time.time()
+        messages = gen.generate_batch(num_messages=3, language="en")
+        elapsed = time.time() - t0
+
+        assert isinstance(messages, list), f"list가 아님: {type(messages)}"
+        assert len(messages) > 0, "빈 리스트 반환"
+        assert all(isinstance(m, str) and len(m) > 0 for m in messages)
+        preview = messages[0][:50]
+        _pass(name, f"{elapsed:.1f}s | {len(messages)}개 | '{preview}…'")
+    except Exception as e:
+        _fail(name, e)
+
+
 def test_gemini_generate_context_none_fallback():
     """context=None 시 기존 프롬프트 방식으로 정상 동작 확인."""
     name = "GeminiCommentGenerator.generate — context=None backward compat"
@@ -402,7 +432,7 @@ def test_gemini_generate_context_none_fallback():
         _skip(name, "GEMINI_API_KEY not set")
         return
     try:
-        from connection.llm_command.gemini_comment import GeminiCommentGenerator
+        from connection.gemini.gemini_comment import GeminiCommentGenerator
         gen = GeminiCommentGenerator()
         text = gen.generate("en", context=None)
         assert isinstance(text, str) and len(text) > 0
@@ -436,6 +466,7 @@ if __name__ == "__main__":
     print("[ Gemini API ]")
     test_gemini_generate_english()
     test_gemini_generate_korean()
+    test_gemini_generate_batch()
     test_gemini_fallback_on_invalid_key()
 
     print()
