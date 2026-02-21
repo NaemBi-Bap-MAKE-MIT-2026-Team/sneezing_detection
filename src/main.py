@@ -34,6 +34,14 @@ from ml_model import config as cfg
 from communication import MicrophoneStream, NetworkMicStream
 from output_feature import LCD, GifAnimator
 
+# LLM + TTS 연동 (API 키 없이도 기존 WAV 재생으로 폴백)
+try:
+    from connection import BlessYouFlow
+    _BLESS_FLOW_AVAILABLE = True
+except (ImportError, Exception) as _e:
+    print(f"[WARN] BlessYouFlow 불러오기 실패 ({_e}) — 기존 WAV 재생 모드로 동작합니다.")
+    _BLESS_FLOW_AVAILABLE = False
+
 # ---------------------------------------------------------------------- #
 # Paths (fixed to your current repo layout)                               #
 # ---------------------------------------------------------------------- #
@@ -216,6 +224,17 @@ def main() -> None:
     ap.add_argument("--recv-host", default="0.0.0.0")
     ap.add_argument("--recv-port", type=int, default=12345)
     ap.add_argument("--no-lcd", action="store_true")
+    ap.add_argument(
+        "--lang",
+        default="en",
+        choices=["en", "ko"],
+        help="Gemini 멘트 생성 언어 (en 또는 ko, 기본값: en)",
+    )
+    ap.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="LLM/TTS 기능을 비활성화하고 기존 WAV 재생만 사용",
+    )
     args = ap.parse_args()
 
     # fail-fast asset checks
@@ -223,6 +242,22 @@ def main() -> None:
     require(STATS_PATH, "Norm stats")
     require(GIF_PATH,   "Bless you GIF")
     require(BLESS_WAV,  "Bless you WAV")
+
+    # LLM + TTS 흐름 초기화
+    bless_flow = None
+    use_llm = _BLESS_FLOW_AVAILABLE and not args.no_llm
+    if use_llm:
+        try:
+            bless_flow = BlessYouFlow(
+                bless_wav_path=BLESS_WAV,
+                language=args.lang,
+            )
+            print(f"✓ BlessYouFlow 활성화 (language={args.lang})")
+        except (ValueError, ImportError) as e:
+            print(f"[WARN] BlessYouFlow 초기화 실패: {e}")
+            print("       → GEMINI_API_KEY / ELEVENLABS_API_KEY 환경 변수를 확인하세요.")
+            print("       → 기존 WAV 재생 모드로 동작합니다.")
+            bless_flow = None
 
     # model + stats
     print("Loading model and stats...")
@@ -268,10 +303,15 @@ def main() -> None:
     )
 
     def on_detect(p: float, _now: float):
-        print(f"Bless you! p={p:.3f}")
-        play_bless_wav_async(BLESS_WAV)
+        print(f"🤧 Bless you! p={p:.3f}")
         if animator:
             animator.trigger()
+        if bless_flow is not None:
+            # bless_you.wav → Gemini 멘트 → ElevenLabs TTS (백그라운드)
+            bless_flow.run_async()
+        else:
+            # 폴백: 기존 WAV 재생
+            play_bless_wav_async(BLESS_WAV)
 
     print("STREAM START (Ctrl+C to stop)")
     print(f"mode: hybrid burst, burst={BURST_SECONDS}s, hop={HOP_SEC}s")
