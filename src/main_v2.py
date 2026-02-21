@@ -32,7 +32,7 @@ import numpy as np
 from ml_model import LiteModel, load_stats, preproc, resample_to_model_sr, rms
 from ml_model import config as cfg
 from communication import MicrophoneStream, NetworkMicStream
-from output_feature import LCD, LCDAnimator
+from output_feature import LCD, GifAnimator
 
 # ---------------------------------------------------------------------- #
 # Paths (fixed to your current repo layout)                               #
@@ -45,9 +45,9 @@ STATS_PATH  = SRC_DIR / "v4_norm_stats.npz"
 OUTPUT_DIR = SRC_DIR / "output_feature"
 IMAGES_DIR = OUTPUT_DIR / "images"
 SOUNDS_DIR = OUTPUT_DIR / "sounds"
-BLESS_WAV  = SOUNDS_DIR / "bless_you.wav"
 
-ANIM_FPS = 12.0
+GIF_PATH  = IMAGES_DIR / "bless_you.gif"
+BLESS_WAV = SOUNDS_DIR / "bless_you.wav"
 
 
 def require(p: Path, label: str):
@@ -56,8 +56,6 @@ def require(p: Path, label: str):
 
 
 def play_bless_wav_async(wav_path: Path) -> None:
-    wav_path = Path(wav_path)
-
     def _run():
         try:
             subprocess.run(["aplay", "-q", str(wav_path)], check=False)
@@ -223,14 +221,8 @@ def main() -> None:
     # fail-fast asset checks
     require(TFLITE_PATH, "TFLite model")
     require(STATS_PATH, "Norm stats")
-    require(IMAGES_DIR, "Images dir")
-    require(SOUNDS_DIR, "Sounds dir")
-    require(BLESS_WAV, "Bless wav")
-
-    require(IMAGES_DIR / "idle.png", "idle image")
-    require(IMAGES_DIR / "detect1.png", "detect1 image")
-    require(IMAGES_DIR / "detect2.png", "detect2 image")
-    require(IMAGES_DIR / "detect3.png", "detect3 image")
+    require(GIF_PATH,   "Bless you GIF")
+    require(BLESS_WAV,  "Bless you WAV")
 
     # model + stats
     print("Loading model and stats...")
@@ -250,15 +242,10 @@ def main() -> None:
         print("LCD: disabled (--no-lcd)")
     else:
         lcd = LCD()
-        animator = LCDAnimator(
+        animator = GifAnimator(
             lcd=lcd,
-            idle_path=IMAGES_DIR / "idle.png",
-            frame_paths=[
-                IMAGES_DIR / "detect1.png",
-                IMAGES_DIR / "detect2.png",
-                IMAGES_DIR / "detect3.png",
-            ],
-            fps=ANIM_FPS,
+            gif_path=GIF_PATH,
+            fade=False,  # enable after testing: set fade=True
         )
         animator.start()
 
@@ -280,9 +267,8 @@ def main() -> None:
         cooldown_sec=cfg.COOLDOWN_SEC,
     )
 
-    def on_detect(p: float, now: float):
+    def on_detect(p: float, _now: float):
         print(f"Bless you! p={p:.3f}")
-        # 동시에 시작
         play_bless_wav_async(BLESS_WAV)
         if animator:
             animator.trigger()

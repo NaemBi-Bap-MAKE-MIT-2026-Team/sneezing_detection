@@ -5,8 +5,11 @@ import numpy as np
 try:
     from tflite_runtime.interpreter import Interpreter as TFLiteInterpreter
 except Exception:
-    import tensorflow as tf
-    TFLiteInterpreter = tf.lite.Interpreter
+    try:
+        from ai_edge_litert.interpreter import Interpreter as TFLiteInterpreter
+    except Exception:
+        import tensorflow as tf
+        TFLiteInterpreter = tf.lite.Interpreter
 
 
 class LiteModel:

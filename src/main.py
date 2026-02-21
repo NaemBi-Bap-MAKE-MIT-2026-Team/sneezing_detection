@@ -40,9 +40,9 @@ from output_feature import SpeakerOutput, LCD, LCDAnimator
 # ---------------------------------------------------------------------- #
 # Asset paths                                                             #
 # ---------------------------------------------------------------------- #
-BASE_DIR   = Path.home() / "Documents" / "sneeze-detection"
-IMAGES_DIR = BASE_DIR / "images"
-ANIM_FPS   = 12.0
+BASE_DIR   = Path(__file__).parent / "output_feature" / "images"
+IMAGES_DIR = BASE_DIR
+ANIM_FRAME_SEC = 0.05   # GIF 프레임 간격 (초)
 
 
 # ---------------------------------------------------------------------- #
@@ -121,13 +121,9 @@ def main() -> None:
         lcd      = LCD()
         animator = LCDAnimator(
             lcd         = lcd,
-            idle_path   = IMAGES_DIR / "idle.png",
-            frame_paths = [
-                IMAGES_DIR / "detect1.png",
-                IMAGES_DIR / "detect2.png",
-                IMAGES_DIR / "detect3.png",
-            ],
-            fps = ANIM_FPS,
+            idle_path   = IMAGES_DIR / "bless_you.gif",
+            frame_paths = [IMAGES_DIR / "bless_you.gif"],
+            frame_sec   = 0.05,
         )
         animator.start()  # show idle frame on LCD
 
