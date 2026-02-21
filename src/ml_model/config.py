@@ -25,3 +25,27 @@ N_FFT      = 400
 HOP        = 160
 CENTER     = False   # IMPORTANT: must be False to match v4 training
 TARGET_RMS = 0.1
+
+# ──────────────────────────────────────────
+# GPS / Weather / Air Quality (ip-api + Open-Meteo)
+# ──────────────────────────────────────────
+
+# IP 위치 조회 엔드포인트 (무료, API 키 불필요)
+GPS_IP_API_URL = "http://ip-api.com/json/"
+
+# Open-Meteo 날씨 엔드포인트 템플릿
+WEATHER_API_URL = (
+    "https://api.open-meteo.com/v1/forecast"
+    "?latitude={lat}&longitude={lon}"
+    "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m"
+)
+
+# Open-Meteo 대기질 엔드포인트 템플릿
+AIR_QUALITY_API_URL = (
+    "https://air-quality-api.open-meteo.com/v1/air-quality"
+    "?latitude={lat}&longitude={lon}"
+    "&current=pm10,pm2_5,us_aqi"
+)
+
+# GPS / 날씨 API HTTP 타임아웃 (초)
+CONTEXT_FETCH_TIMEOUT = 5
