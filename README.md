@@ -1,31 +1,31 @@
 # 🤧 Sneeze Detection System
 
-A comprehensive machine learning project for real-time sneeze detection using MFCC features and lightweight CNN models, optimized for embedded systems like Raspberry Pi and Jetson Nano.
+A comprehensive machine learning project for real-time sneeze detection using log-mel spectrogram features and lightweight CNN models, optimized for embedded systems like Raspberry Pi 4.
 
 ## 🎯 Project Overview
 
 This project consists of two main components:
 
-1. **Model Training** ([`sneeze_detection_lightweight.ipynb`](sneeze_detection_lightweight.ipynb)): Training pipeline for a lightweight CNN model using MFCC features
-2. **Real-time Detection** ([`realtime_detection/`](realtime_detection/)): Production-ready real-time inference system
+1. **Model Training** (notebooks): Training pipeline for a lightweight CNN model using log-mel spectrogram features
+2. **Real-time Detection** ([`src/`](src/)): Production-ready real-time inference system with Hybrid Burst detection
 
 ### Key Features
 
-- ✅ **Lightweight Architecture**: ~50K parameters for efficient inference on embedded devices
-- ✅ **MFCC-based Features**: Industry-standard audio feature extraction with Delta and Delta-Delta
-- ✅ **Data Augmentation**: Time stretching, pitch shifting, noise addition for robust training
-- ✅ **Improved Negative Sampling**: Focused on life noise (human-related sounds) for better discrimination
-- ✅ **Modular Design**: Clean separation of concerns for maintainability and testing
-- ✅ **Real-time Processing**: ~2 seconds latency with continuous audio monitoring
-- ✅ **Raspberry Pi Ready**: Optimized for embedded systems deployment
+- ✅ **Lightweight Architecture**: ~20K parameters TFLite model for efficient inference on RPi 4
+- ✅ **Log-Mel Spectrogram**: 64-band mel spectrogram features matching v4 training settings exactly
+- ✅ **Hybrid Burst Detection**: RMS guard gate + burst sliding inference — minimal CPU when quiet
+- ✅ **Modular Design**: Clean separation of audio, model, and output concerns
+- ✅ **Dual Input Modes**: Local microphone or UDP network audio stream
+- ✅ **GIF Animation Output**: ST7789 240×240 LCD with per-frame GIF playback on detection
+- ✅ **Raspberry Pi Ready**: Optimized for RPi 4 deployment
 
 ## 📁 Project Structure
 
 ```
-sneeze_detection/
+sneezing_detection/
 ├── README.md
 ├── src/                                        # RPi deployment (v4, modular)
-│   ├── main.py                                 # Entry point (local / network mode)
+│   ├── main.py                                 # Entry point — Hybrid Burst detector
 │   ├── v4_model.tflite                         # TFLite model weights
 │   ├── v4_norm_stats.npz                       # Z-score normalisation statistics
 │   ├── communication/                          # Unified audio-input layer
@@ -41,18 +41,22 @@ sneeze_detection/
 │   │   ├── preprocessing.py                    # rms, logmel, preproc, load_stats
 │   │   └── model.py                            # LiteModel (TFLite wrapper)
 │   ├── output_feature/
+│   │   ├── images/bless_you.gif                # Detection animation (GIF)
+│   │   ├── sounds/bless_you.wav                # Detection sound
 │   │   ├── speaker_output.py                   # SpeakerOutput (alert / beep)
-│   │   └── lcd_output.py                       # LCD + LCDAnimator (ST7789)
-│   └── tests/
-│       ├── test_ml_model.py                    # Preprocessing & inference tests
-│       └── test_communication.py               # UDP loopback tests
+│   │   └── lcd_output.py                       # LCD + GifAnimator (ST7789 240×240)
+│   └── requirements_rpi4.txt                   # RPi 4 production dependencies
+├── raspi/sneeze-detection/
+│   └── real_time_detection.py                  # Original standalone RPi script (reference)
+├── realtime_detection/                         # Legacy MFCC-based detection (reference)
+│   └── main.py
 ├── legacy_code/                                # v1–v4 reference implementations
 │   └── output/v4/
 │       ├── test_no_saving_v4.py
 │       └── test_saving_v4.py
-├── raspi/sneeze-detection/
-│   └── real_time_detection.py                  # Original RPi script (reference)
-└── sneeze_detection_lightweight.ipynb          # Model training notebook
+└── notebooks/                                  # Training notebooks
+    ├── sneeze_detection_lightweight.ipynb
+    └── YAMnet_fine_tuning.ipynb
 ```
 
 ## 🚀 Quick Start
@@ -62,25 +66,22 @@ sneeze_detection/
 Open and run the Jupyter notebook:
 
 ```bash
-jupyter notebook sneeze_detection_lightweight.ipynb
+jupyter notebook notebooks/sneeze_detection_lightweight.ipynb
 ```
 
 ### 2. Real-time Detection (`src/`)
 
-Place the model files in `src/` before running:
+#### Asset layout
+
+Place model weights and assets under `src/` before running:
 
 ```
 src/
 ├── v4_model.tflite
-└── v4_norm_stats.npz
-```
-
-Also create the asset directory (images + sound for LCD and speaker):
-
-```
-~/Documents/sneeze-detection/
-    images/  idle.png  detect1.png  detect2.png  detect3.png
-    sounds/  bless_you.wav
+├── v4_norm_stats.npz
+└── output_feature/
+    ├── images/  bless_you.gif
+    └── sounds/  bless_you.wav
 ```
 
 ---
@@ -92,10 +93,10 @@ The simplest setup: microphone and inference run on the same Raspberry Pi.
 ```bash
 cd src
 
-# With LCD
+# With LCD (ST7789 attached)
 python main.py
 
-# Without LCD (no ST7789 hardware attached)
+# Without LCD
 python main.py --no-lcd
 ```
 
@@ -164,101 +165,138 @@ python communication/send.py --host 127.0.0.1 --port 12345
 
 ---
 
-### 3. Tests
-
-```bash
-cd src
-python tests/test_ml_model.py        # preprocessing + TFLite inference
-python tests/test_communication.py   # UDP loopback (no mic required)
-```
-
 ## 📊 Model Performance
 
 ### Training Results
 - **Architecture**: LightweightSneezeCNN (Depthwise Separable Convolutions)
-- **Parameters**: ~20,751 (~50K total with batch norm)
-- **Model Size**: ~0.2 MB (FP32)
-- **Test Accuracy**: >90% (on validation set)
-- **F1 Score**: ~0.87-0.90
+- **Parameters**: ~20,751
+- **Model Size**: ~0.2 MB (FP32 TFLite)
+- **Test Accuracy**: >90%
+- **F1 Score**: ~0.87–0.90
 
-### Real-time Performance
-- **Processing Time**: 80-120ms per 2-second window
-  - Preprocessing: ~10ms
-  - MFCC Extraction: ~60-80ms
-  - Model Inference: ~15-25ms
-- **Latency**: ~2.1 seconds (window + processing)
-- **CPU Usage**: 25-40% (Raspberry Pi 4)
-- **Memory**: ~60MB
+### Real-time Performance (Hybrid Burst mode)
+- **IDLE CPU**: near-zero (only RMS gate check per frame)
+- **BURST inference**: ~80–120 ms per 2-second window on RPi 4
+  - Resample (48k→16k): ~5 ms
+  - Log-mel spectrogram: ~10 ms
+  - TFLite inference: ~15–25 ms
+- **Worst-case detection latency**: trigger delay + 0.5 s hop ≈ 0.6–1.1 s
+- **Memory**: ~60 MB
+
+---
 
 ## 🧠 Technical Details
 
-### Data Pipeline
+### Detection Pipeline (Hybrid Burst)
 
 ```
-Audio (16kHz, 2s) → Preprocessing → MFCC (60×63) → Model → Probability
+Mic (48 kHz)
+  │
+  ▼
+Frame (100 ms)  ──►  RMS < threshold?  ──► [IDLE: discard, no inference]
+                              │
+                         RMS ≥ threshold
+                              │
+                              ▼
+                        [BURST mode, 3 s]
+                              │
+                        every 0.5 s hop
+                              │
+                              ▼
+              Last 2 s of ring buffer (48 kHz)
+                              │
+                       Resample → 16 kHz
+                              │
+                       RMS normalisation
+                              │
+                    Log-mel spectrogram (64 mels)
+                              │
+                       Z-score normalisation
+                              │
+                     TFLite inference (1, 199, 64, 1)
+                              │
+                      p ≥ 0.90?  ──► Bless you! + LCD GIF + WAV
 ```
 
-#### Preprocessing Steps
-1. **RMS Normalization**: Target RMS = 0.1
-2. **Pre-emphasis**: α = 0.97 (high-frequency boost)
-3. **Silence Trimming**: top_db = 20
+### Audio Feature Extraction
 
-#### MFCC Features
-- **Base Coefficients**: 20 MFCC
-- **Delta Features**: 20 (first-order derivative)
-- **Delta-Delta Features**: 20 (second-order derivative)
-- **Total**: 60 features × 63 time frames
+| Parameter | Value | Note |
+|---|---|---|
+| Capture SR | 48 000 Hz | stable across most RPi drivers |
+| Model SR | 16 000 Hz | resample before feature extraction |
+| Clip length | 2.0 s | window fed into model |
+| n_mels | 64 | mel filter banks |
+| n_fft | 400 | FFT window |
+| hop_length | 160 | frame stride |
+| center | False | **must match v4 training** |
+| Target RMS | 0.1 | per-clip normalisation |
+
+### Detection Thresholds (`src/ml_model/config.py`)
+
+| Parameter | Value | Description |
+|---|---|---|
+| `RMS_TRIGGER_TH` | `0.008` | RMS level that enters BURST mode |
+| `PROB_TH` | `0.90` | Sneeze probability to trigger detection |
+| `COOLDOWN_SEC` | `1.5` | Silence period after a detection |
+| `FRAME_SEC` | `0.10` | RMS guard frame duration |
 
 ### Model Architecture
 
-```python
-LightweightSneezeCNN(
-    Input: (1, 1, 60, 63)
-    → DepthwiseSeparableConv2D (1→32)
-    → MaxPool2D
-    → DepthwiseSeparableConv2D (32→64)
-    → MaxPool2D
-    → DepthwiseSeparableConv2D (64→128)
-    → MaxPool2D
-    → GlobalAveragePooling
-    → FC(128→64) + Dropout(0.3)
-    → FC(64→2)
-    Output: (1, 2)
-)
+```
+Input: (1, 199, 64, 1)   — (batch, time_frames, n_mels, channel)
+  → Conv2D blocks (Depthwise Separable)
+  → GlobalAveragePooling
+  → FC + Dropout
+Output: (1, 2)            — [non-sneeze prob, sneeze prob]
 ```
 
-### Data Augmentation
+---
 
-The training pipeline includes:
-- **Time Stretching**: 0.8x - 1.2x speed variation
-- **Pitch Shifting**: ±3 semitones
-- **Noise Addition**: Gaussian noise (0.002-0.01 factor)
-- **Time Shifting**: ±20% temporal shift
+## 🔧 Configuration
 
-### Negative Sample Selection
+All tunable parameters are in [`src/ml_model/config.py`](src/ml_model/config.py):
 
-Instead of random environmental sounds, the model uses **life noise** (human-related sounds) for better discrimination:
-- Coughing, breathing, laughing
-- Footsteps, door knocks, clapping
-- Keyboard typing, drinking, brushing teeth
+```python
+# Audio capture
+CAPTURE_SR   = 48000   # microphone sample rate (Hz)
+MODEL_SR     = 16000   # model input sample rate (Hz)
 
-This approach significantly improves classification accuracy by creating clearer class boundaries.
+# Analysis window
+CLIP_SECONDS = 2.0     # inference window length
+FRAME_SEC    = 0.10    # RMS guard frame duration
+
+# Detection thresholds
+RMS_TRIGGER_TH = 0.008   # enter BURST when RMS exceeds this
+PROB_TH        = 0.90    # sneeze probability threshold
+COOLDOWN_SEC   = 1.5     # post-detection cooldown (seconds)
+
+# Feature extraction — MUST match v4 training
+N_MELS = 64
+N_FFT  = 400
+HOP    = 160
+CENTER = False           # IMPORTANT: must be False
+```
+
+---
 
 ## 📦 Dependencies
 
-### Core Libraries
-- `torch>=2.0.0` - Deep learning framework
-- `librosa>=0.10.0` - Audio feature extraction
-- `pyaudio>=0.2.13` - Real-time audio capture
-- `numpy>=1.24.0` - Numerical computing
-- `soundfile>=0.12.1` - Audio file I/O
+### RPi 4 Runtime (`src/requirements_rpi4.txt`)
+- `numpy` — numerical computing
+- `librosa` — audio resampling + log-mel spectrogram
+- `sounddevice` — microphone capture
+- `pillow` — image loading for LCD
+- `ai-edge-litert` / `tflite-runtime` — TFLite inference
+- `st7789` — ST7789 LCD SPI driver (RPi only)
 
 ### For Training
-- `polars` - Fast dataframe operations
-- `matplotlib` - Visualization
-- `scikit-learn` - ML utilities
+- `torch>=2.0.0` — deep learning framework
+- `librosa>=0.10.0` — audio feature extraction
+- `polars` — fast dataframe operations
+- `scikit-learn` — ML utilities
+- `matplotlib` — visualization
 
-See [`realtime_detection/requirements.txt`](realtime_detection/requirements.txt) for complete list.
+---
 
 ## 🎓 Dataset
 
@@ -266,7 +304,7 @@ See [`realtime_detection/requirements.txt`](realtime_detection/requirements.txt)
 - **Positive Samples**: 968 sneeze recordings
 - **Negative Samples**: 968 life noise samples from ESC-50
   - Categories: coughing, breathing, laughing, footsteps, etc.
-- **Augmentation**: 2x data (1936 positive + 1936 negative)
+- **Augmentation**: 2× data (1 936 positive + 1 936 negative)
 
 ### ESC-50 Dataset
 The project uses [ESC-50](https://github.com/karolpiczak/ESC-50) (Environmental Sound Classification) dataset for negative samples.
@@ -276,65 +314,26 @@ The project uses [ESC-50](https://github.com/karolpiczak/ESC-50) (Environmental 
 git clone https://github.com/karolpiczak/ESC-50.git esc-50
 ```
 
-## 🔧 Configuration
-
-Key parameters can be adjusted in [`realtime_detection/utils/config.py`](realtime_detection/utils/config.py):
-
-```python
-# Audio Parameters
-SAMPLE_RATE = 16000      # Audio sample rate (Hz)
-WINDOW_SIZE = 32000      # Analysis window (2 seconds)
-THRESHOLD = 0.8          # Detection threshold
-
-# MFCC Parameters (DO NOT CHANGE - must match training)
-N_MFCC = 20              # MFCC coefficients
-N_FFT = 2048             # FFT window size
-HOP_LENGTH = 512         # Frame stride
-INCLUDE_DELTAS = True    # Delta + Delta-Delta features
-```
-
-## 🧪 Testing
-
-Test individual components:
-
-```bash
-# Test model inference
-cd realtime_detection
-python -m modules.model_inference
-
-# Test MFCC extraction
-python -m modules.mfcc_extractor
-
-# Test audio capture
-python -m modules.audio_capture
-```
+---
 
 ## 📈 Future Improvements
 
 ### Short-term
-- [ ] Export to ONNX for faster inference
-- [ ] INT8 quantization for Raspberry Pi
-- [ ] Multi-threading for parallel processing
+- [ ] INT8 quantization for lower inference latency on RPi 4
+- [ ] Tune `BURST_SECONDS` and `HOP_SEC` per deployment environment
 - [ ] Web interface for monitoring
 
 ### Long-term
 - [ ] Edge TPU support (Google Coral)
-- [ ] RNN/LSTM for lower latency
 - [ ] Multi-class detection (sneeze, cough, speech)
 - [ ] Mobile app with on-device inference
 - [ ] Cloud integration for logging
 
+---
+
 ## 🤖 Built with AI
 
 This project was developed collaboratively with **[Claude](https://claude.ai)** (Anthropic's AI assistant) using the **[Claude Code](https://claude.ai/claude-code)** CLI tool.
-
-### Development Process
-1. **Planning**: Analyzed training pipeline and designed modular architecture
-2. **Implementation**: Systematically built each module with proper separation of concerns
-3. **Testing**: Created comprehensive test cases for each component
-4. **Documentation**: Generated detailed documentation and usage guides
-
-The entire system - from initial exploration to production-ready deployment - was created through interactive AI-assisted development, demonstrating the power of human-AI collaboration in software engineering.
 
 ## 👨‍💻 Author
 
@@ -351,17 +350,15 @@ This project is for research and educational purposes.
 
 - **Training Data**: [ESC-50](https://github.com/karolpiczak/ESC-50) environmental sound dataset
 - **Model Architecture**: Inspired by MobileNet's Depthwise Separable Convolutions
-- **MFCC Implementation**: [Librosa](https://librosa.org/) library
+- **Feature Extraction**: [Librosa](https://librosa.org/) library
 - **AI Development**: [Claude](https://claude.ai) by Anthropic
 - **Development Tool**: [Claude Code](https://claude.ai/claude-code) CLI
 
 ## 📚 References
 
 - [Librosa Documentation](https://librosa.org/doc/latest/index.html)
-- [PyTorch Documentation](https://pytorch.org/docs/stable/index.html)
-- [MFCC Tutorial](https://en.wikipedia.org/wiki/Mel-frequency_cepstrum)
-- [Depthwise Separable Convolutions](https://paperswithcode.com/method/depthwise-separable-convolution)
 - [ESC-50 Dataset Paper](http://karol.piczak.com/papers/Piczak2015-ESC-Dataset.pdf)
+- [Depthwise Separable Convolutions](https://paperswithcode.com/method/depthwise-separable-convolution)
 
 ## 📧 Contact
 
