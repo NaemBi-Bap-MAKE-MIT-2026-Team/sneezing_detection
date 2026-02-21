@@ -43,7 +43,7 @@ class LCD:
         try:
             import st7789
         except ImportError as e:
-            raise RuntimeError(f"LCD 드라이버(st7789) import 실패: {e}")
+            raise RuntimeError(f"LCD driver (st7789) import failed: {e}")
 
         self.disp = st7789.ST7789(
             rotation=90,

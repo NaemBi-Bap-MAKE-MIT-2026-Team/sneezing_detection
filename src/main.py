@@ -1,33 +1,30 @@
 """
 src/main.py
 -----------
-Real-time sneeze detection entry point for Raspberry Pi.
+RPi inference + LCD + speaker pipeline (Hybrid Burst mode)
 
-Wires together:
-  - communication   : unified audio-input layer (local mic OR network stream)
-  - ml_model        : TFLite model + v4 preprocessing
-  - output_feature  : ST7789 LCD animation + speaker alert
+Directory layout (actual):
+  ~/sneezing_detection/src/
+    main.py
+    v4_model.tflite
+    v4_norm_stats.npz
+    output_feature/
+      images/ idle.png detect1.png detect2.png detect3.png
+      sounds/ bless_you.wav
 
-Asset directory layout (matches raspi/sneeze-detection/):
-  ~/Documents/sneeze-detection/
-    images/  idle.png  detect1.png  detect2.png  detect3.png
-    sounds/  bless_you.wav
-    weights/ v4_model.tflite  v4_norm_stats.npz
+Run
+---
+# Network audio (from laptop send.py):
+python -m src.main --network --recv-host 0.0.0.0 --recv-port 12345
 
-Usage
------
-# Local microphone (default):
-python main.py
-
-# Receive audio from send.py running on another device:
-python main.py --network --recv-host 0.0.0.0 --recv-port 12345
-
-# Disable LCD (e.g. no hardware attached):
-python main.py --no-lcd
+# Local mic:
+python -m src.main
 """
 
 import argparse
 import time
+import threading
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -35,160 +32,256 @@ import numpy as np
 from ml_model import LiteModel, load_stats, preproc, resample_to_model_sr, rms
 from ml_model import config as cfg
 from communication import MicrophoneStream, NetworkMicStream
-from output_feature import SpeakerOutput, LCD, LCDAnimator
+from output_feature import LCD, GifAnimator
 
 # ---------------------------------------------------------------------- #
-# Asset paths                                                             #
+# Paths (fixed to your current repo layout)                               #
 # ---------------------------------------------------------------------- #
-BASE_DIR   = Path(__file__).parent / "output_feature" / "images"
-IMAGES_DIR = BASE_DIR
-ANIM_FRAME_SEC = 0.05   # GIF 프레임 간격 (초)
+SRC_DIR = Path(__file__).resolve().parent  # ~/sneezing_detection/src
+
+TFLITE_PATH = SRC_DIR / "v4_model.tflite"
+STATS_PATH  = SRC_DIR / "v4_norm_stats.npz"
+
+OUTPUT_DIR = SRC_DIR / "output_feature"
+IMAGES_DIR = OUTPUT_DIR / "images"
+SOUNDS_DIR = OUTPUT_DIR / "sounds"
+
+GIF_PATH  = IMAGES_DIR / "bless_you.gif"
+BLESS_WAV = SOUNDS_DIR / "bless_you.wav"
 
 
-# ---------------------------------------------------------------------- #
-# Helpers                                                                 #
-# ---------------------------------------------------------------------- #
+def require(p: Path, label: str):
+    if not p.exists():
+        raise FileNotFoundError(f"{label} not found: {p}")
+
+
+def play_bless_wav_async(wav_path: Path) -> None:
+    def _run():
+        try:
+            subprocess.run(["aplay", "-q", str(wav_path)], check=False)
+        except Exception as e:
+            print(f"[WARN] aplay failed: {e}")
+
+    if wav_path.exists():
+        threading.Thread(target=_run, daemon=True).start()
+    else:
+        print(f"[WARN] bless wav missing: {wav_path}")
+
 
 def _build_mic(args):
-    """Return a MicrophoneStream or NetworkMicStream depending on --network."""
     if args.network:
         return NetworkMicStream(
-            host        = args.recv_host,
-            port        = args.recv_port,
-            capture_sr  = cfg.CAPTURE_SR,
-            frame_sec   = cfg.FRAME_SEC,
-            pre_seconds = cfg.PRE_SECONDS,
+            host=args.recv_host,
+            port=args.recv_port,
+            capture_sr=cfg.CAPTURE_SR,
+            frame_sec=cfg.FRAME_SEC,
+            pre_seconds=0.0,  # hybrid burst does not need pre_buffer
         )
     return MicrophoneStream(
-        capture_sr  = cfg.CAPTURE_SR,
-        frame_sec   = cfg.FRAME_SEC,
-        pre_seconds = cfg.PRE_SECONDS,
-        device      = cfg.INPUT_DEVICE,
+        capture_sr=cfg.CAPTURE_SR,
+        frame_sec=cfg.FRAME_SEC,
+        pre_seconds=0.0,   # hybrid burst does not need pre_buffer
+        device=cfg.INPUT_DEVICE,
     )
 
 
-# ---------------------------------------------------------------------- #
-# Main                                                                    #
-# ---------------------------------------------------------------------- #
+class HybridBurstDetector:
+    """
+    Hybrid Burst (Guard RMS + Burst Sliding Inference)
+
+    - Always keeps a 2s ring buffer (48k domain).
+    - IDLE: compute RMS on guard frames only.
+    - Trigger: enter BURST for BURST_SECONDS.
+    - BURST: every HOP_SEC, run inference on current 2s window.
+    - Detect: call on_detect(prob), enter cooldown.
+    """
+
+    def __init__(
+        self,
+        *,
+        model,
+        mu: np.ndarray,
+        sdv: np.ndarray,
+        capture_sr: int,
+        clip_seconds: float,
+        guard_frame_sec: float,
+        rms_trigger_th: float,
+        burst_seconds: float,
+        hop_sec: float,
+        prob_th: float,
+        cooldown_sec: float,
+    ):
+        self.model = model
+        self.mu = mu
+        self.sdv = sdv
+
+        self.capture_sr = int(capture_sr)
+        self.clip_seconds = float(clip_seconds)
+
+        self.guard_frame_sec = float(guard_frame_sec)
+        self.rms_trigger_th = float(rms_trigger_th)
+
+        self.burst_seconds = float(burst_seconds)
+        self.hop_sec = float(hop_sec)
+
+        self.prob_th = float(prob_th)
+        self.cooldown_sec = float(cooldown_sec)
+
+        self.win_samples = int(self.capture_sr * self.clip_seconds)
+        self.ring = np.zeros(self.win_samples, dtype=np.float32)
+        self.filled = 0
+
+        self.guard_samples = max(1, int(self.capture_sr * self.guard_frame_sec))
+        self.guard_acc = np.zeros(0, dtype=np.float32)
+
+        self.hop_samples = max(1, int(self.capture_sr * self.hop_sec))
+        self.since_last_infer = 0
+
+        self.STATE_IDLE = 0
+        self.STATE_BURST = 1
+        self.state = self.STATE_IDLE
+
+        self.burst_until = 0.0
+        self.ignore_until = 0.0
+
+    def feed(self, x: np.ndarray, now: float, on_detect):
+        x = np.asarray(x, dtype=np.float32).reshape(-1)
+
+        # always update ring
+        self._push_ring(x)
+        self.since_last_infer += len(x)
+
+        # cooldown
+        if now < self.ignore_until:
+            self.state = self.STATE_IDLE
+            self.guard_acc = np.zeros(0, dtype=np.float32)
+            return
+
+        # IDLE: RMS guard only
+        if self.state == self.STATE_IDLE:
+            self.guard_acc = np.concatenate([self.guard_acc, x])
+            while len(self.guard_acc) >= self.guard_samples:
+                g = self.guard_acc[:self.guard_samples]
+                self.guard_acc = self.guard_acc[self.guard_samples:]
+
+                g_rms = rms(g)
+                if g_rms >= self.rms_trigger_th:
+                    self.state = self.STATE_BURST
+                    self.burst_until = now + self.burst_seconds
+                    self.since_last_infer = self.hop_samples  # force immediate infer
+                    self.guard_acc = np.zeros(0, dtype=np.float32)
+                    break
+
+        # BURST: sliding inference
+        if self.state == self.STATE_BURST:
+            if now >= self.burst_until:
+                self.state = self.STATE_IDLE
+                self.since_last_infer = 0
+                return
+
+            if self.filled < self.win_samples:
+                return
+
+            if self.since_last_infer >= self.hop_samples:
+                self.since_last_infer = 0
+                p = self._infer_current_window()
+
+                if p >= self.prob_th:
+                    on_detect(p, now)
+                    self.ignore_until = now + self.cooldown_sec
+                    self.state = self.STATE_IDLE
+                    self.since_last_infer = 0
+                    self.guard_acc = np.zeros(0, dtype=np.float32)
+
+    def _push_ring(self, x: np.ndarray):
+        n = len(x)
+        if n >= self.win_samples:
+            self.ring[:] = x[-self.win_samples:]
+            self.filled = self.win_samples
+            return
+        self.ring = np.roll(self.ring, -n)
+        self.ring[-n:] = x
+        self.filled = min(self.win_samples, self.filled + n)
+
+    def _infer_current_window(self) -> float:
+        y48 = self.ring.copy()
+        y16 = resample_to_model_sr(y48, self.capture_sr)
+        x_in = preproc(y16, self.mu, self.sdv)
+        return float(self.model.predict_proba(x_in))
+
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Real-time sneeze detector")
-    ap.add_argument(
-        "--network",
-        action="store_true",
-        help="Receive audio from send.py over UDP instead of using a local mic",
-    )
-    ap.add_argument(
-        "--recv-host", default="0.0.0.0",
-        help="[--network] UDP bind address  (default: 0.0.0.0)",
-    )
-    ap.add_argument(
-        "--recv-port", type=int, default=12345,
-        help="[--network] UDP port          (default: 12345)",
-    )
-    ap.add_argument(
-        "--no-lcd",
-        action="store_true",
-        help="Disable the ST7789 LCD driver (useful when no display is attached)",
-    )
+    ap = argparse.ArgumentParser(description="Real-time sneeze detector (hybrid burst)")
+    ap.add_argument("--network", action="store_true")
+    ap.add_argument("--recv-host", default="0.0.0.0")
+    ap.add_argument("--recv-port", type=int, default=12345)
+    ap.add_argument("--no-lcd", action="store_true")
     args = ap.parse_args()
 
-    # ------------------------------------------------------------------ #
-    # Model + normalisation stats                                         #
-    # ------------------------------------------------------------------ #
-    print("Loading model and stats...")
-    mu, sdv = load_stats(cfg.STATS_PATH)
-    model   = LiteModel(cfg.TFLITE_PATH)
+    # fail-fast asset checks
+    require(TFLITE_PATH, "TFLite model")
+    require(STATS_PATH, "Norm stats")
+    require(GIF_PATH,   "Bless you GIF")
+    require(BLESS_WAV,  "Bless you WAV")
 
-    # ------------------------------------------------------------------ #
-    # Microphone source                                                   #
-    # ------------------------------------------------------------------ #
-    mic  = _build_mic(args)
-    mode = (f"network  bind={args.recv_host}:{args.recv_port}"
+    # model + stats
+    print("Loading model and stats...")
+    mu, sdv = load_stats(STATS_PATH)
+    model = LiteModel(TFLITE_PATH)
+
+    # mic
+    mic = _build_mic(args)
+    mode = (f"network bind={args.recv_host}:{args.recv_port}"
             if args.network else
-            f"local  device={cfg.INPUT_DEVICE}  sr={cfg.CAPTURE_SR}")
+            f"local device={cfg.INPUT_DEVICE} sr={cfg.CAPTURE_SR}")
     print(f"Microphone: {mode}")
 
-    # ------------------------------------------------------------------ #
-    # Output: speaker + LCD                                               #
-    # ------------------------------------------------------------------ #
-    speaker  = SpeakerOutput(playback_sr=cfg.MODEL_SR)
-
+    # LCD
+    animator = None
     if args.no_lcd:
-        animator = None
         print("LCD: disabled (--no-lcd)")
     else:
-        lcd      = LCD()
-        animator = LCDAnimator(
-            lcd         = lcd,
-            idle_path   = IMAGES_DIR / "bless_you.gif",
-            frame_paths = [IMAGES_DIR / "bless_you.gif"],
-            frame_sec   = 0.05,
+        lcd = LCD()
+        animator = GifAnimator(
+            lcd=lcd,
+            gif_path=GIF_PATH,
+            fade=False,  # enable after testing: set fade=True
         )
-        animator.start()  # show idle frame on LCD
+        animator.start()
 
-    # ------------------------------------------------------------------ #
-    # Detection loop                                                      #
-    # ------------------------------------------------------------------ #
-    target_samples = int(cfg.CAPTURE_SR * cfg.CLIP_SECONDS)
+    # Hybrid burst parameters (agreed final values)
+    BURST_SECONDS = 3.0
+    HOP_SEC = 0.5
 
-    capturing    = False
-    captured     = []
-    captured_len = 0
-    ignore_until = 0.0
+    detector = HybridBurstDetector(
+        model=model,
+        mu=mu,
+        sdv=sdv,
+        capture_sr=cfg.CAPTURE_SR,
+        clip_seconds=cfg.CLIP_SECONDS,
+        guard_frame_sec=cfg.FRAME_SEC,
+        rms_trigger_th=cfg.RMS_TRIGGER_TH,
+        burst_seconds=BURST_SECONDS,
+        hop_sec=HOP_SEC,
+        prob_th=cfg.PROB_TH,
+        cooldown_sec=cfg.COOLDOWN_SEC,
+    )
+
+    def on_detect(p: float, _now: float):
+        print(f"Bless you! p={p:.3f}")
+        play_bless_wav_async(BLESS_WAV)
+        if animator:
+            animator.trigger()
 
     print("STREAM START (Ctrl+C to stop)")
+    print(f"mode: hybrid burst, burst={BURST_SECONDS}s, hop={HOP_SEC}s")
 
     with mic:
         try:
             while True:
-                x   = mic.read()
+                x = mic.read()
                 now = time.time()
-
-                # Cooldown: keep pre-buffer warm but skip inference
-                if now < ignore_until:
-                    mic.pre_buffer.append(x)
-                    continue
-
-                x_rms = rms(x)
-
-                if not capturing:
-                    mic.pre_buffer.append(x)
-                    if x_rms >= cfg.RMS_TRIGGER_TH:
-                        capturing    = True
-                        captured     = list(mic.pre_buffer)
-                        captured.append(x)
-                        captured_len = sum(len(c) for c in captured)
-                    else:
-                        continue
-                else:
-                    captured.append(x)
-                    captured_len += len(x)
-
-                if capturing and captured_len >= target_samples:
-                    y48 = np.concatenate(captured, axis=0)
-
-                    if len(y48) > target_samples:
-                        y48 = y48[:target_samples]
-                    elif len(y48) < target_samples:
-                        y48 = np.pad(y48, (0, target_samples - len(y48)))
-
-                    y16  = resample_to_model_sr(y48, cfg.CAPTURE_SR)
-                    x_in = preproc(y16, mu, sdv)
-                    p    = model.predict_proba(x_in)
-
-                    if p >= cfg.PROB_TH:
-                        print("Bless you!")
-                        speaker.alert("Bless you!")   # beep + print
-                        if animator:
-                            animator.trigger()         # detect1→2→3 → idle (daemon thread)
-                        ignore_until = time.time() + cfg.COOLDOWN_SEC
-
-                    capturing    = False
-                    captured     = []
-                    captured_len = 0
-                    mic.pre_buffer.clear()
-
+                detector.feed(x, now, on_detect)
         except KeyboardInterrupt:
             print("STOP")
 
