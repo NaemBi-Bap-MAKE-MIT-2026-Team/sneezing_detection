@@ -16,52 +16,17 @@ Replace the constructor arguments to match your wiring.
 import time
 import threading
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from PIL import Image, ImageSequence
 
-# (PIL.Image, duration_sec) 쌍
-_Frame = Tuple[Image.Image, float]
 
-# GIF가 아닌 정지 이미지의 기본 프레임 간격 (초)
-DEFAULT_FRAME_SEC = 0.05
-
-
-def _resize(img: Image.Image) -> Image.Image:
-    """240×240 RGB로 변환."""
-    return img.convert("RGB").resize((240, 240))
-
-
-def load_frames(path: Path, frame_sec: float = DEFAULT_FRAME_SEC) -> List[_Frame]:
-    """이미지 파일을 (프레임, duration) 리스트로 로드합니다.
-
-    - GIF  : 각 프레임을 순서대로 추출하고, frame_sec 을 모든 프레임에 적용합니다.
-    - 정지 이미지(jpg/png 등): 단일 프레임으로 반환합니다.
-
-    Parameters
-    ----------
-    path      : 이미지 파일 경로
-    frame_sec : 프레임 표시 간격 (초). GIF·정지 이미지 모두 동일하게 적용됩니다.
-    """
+def load_frame(path: Path) -> Image.Image:
+    """Load an image file and resize it to 240×240 RGB."""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(path)
-
-    img = Image.open(path)
-
-    if path.suffix.lower() == ".gif":
-        frames: List[_Frame] = []
-        for frame in ImageSequence.Iterator(img):
-            frames.append((_resize(frame.copy()), frame_sec))
-        return frames
-    else:
-        return [(_resize(img), frame_sec)]
-
-
-# 하위 호환용 단일 프레임 로더
-def load_frame(path: Path) -> Image.Image:
-    """Load an image file and resize it to 240×240 RGB (정지 이미지 전용)."""
-    return load_frames(path)[0][0]
+    return Image.open(path).convert("RGB").resize((240, 240))
 
 
 class LCD:
@@ -70,15 +35,15 @@ class LCD:
     Usage
     -----
     lcd = LCD()
-    idle_frames = load_frames(images_dir / "idle.gif")
-    lcd.show(idle_frames[0][0])
+    idle = load_frame(images_dir / "idle.png")
+    lcd.show(idle)
     """
 
     def __init__(self):
         try:
             import st7789
         except ImportError as e:
-            raise RuntimeError(f"LCD 드라이버(st7789) import 실패: {e}")
+            raise RuntimeError(f"LCD driver (st7789) import failed: {e}")
 
         self.disp = st7789.ST7789(
             rotation=90,
@@ -95,23 +60,24 @@ class LCD:
 
 
 class LCDAnimator:
-    """Idle GIF 루프 재생 + 감지 시 detect GIF 한 번 재생 후 idle 복귀.
-
-    GIF / 정지 이미지 모두 지원합니다. frame_sec(기본 0.05초) 간격으로
-    각 프레임을 표시합니다.
+    """Plays a detect animation then returns to idle; runs in a daemon thread.
 
     Usage
     -----
     images_dir = Path("images")
     animator = LCDAnimator(
-        lcd           = LCD(),
-        idle_path     = images_dir / "bless_you.gif",
-        frame_paths   = [images_dir / "bless_you.gif"],
-        frame_sec     = 0.05,
+        lcd        = LCD(),
+        idle_path  = images_dir / "idle.png",
+        frame_paths = [
+            images_dir / "detect1.png",
+            images_dir / "detect2.png",
+            images_dir / "detect3.png",
+        ],
+        fps = 12.0,
     )
-    animator.start()   # idle GIF 루프 시작 (백그라운드 스레드)
-    # 감지 시:
-    animator.trigger() # detect GIF 1회 재생 후 idle 복귀
+    animator.start()        # show idle
+    # on detection:
+    animator.trigger()      # plays detect1→detect2→detect3, then reverts to idle
     """
 
     def __init__(
@@ -119,69 +85,130 @@ class LCDAnimator:
         lcd: LCD,
         idle_path: Path,
         frame_paths: List[Path],
-        frame_sec: float = DEFAULT_FRAME_SEC,
-        fps: float = 12.0,          # 하위 호환용 (미사용, frame_sec 우선)
+        fps: float = 12.0,
     ):
-        self.lcd        = lcd
-        self.frame_sec  = frame_sec
+        self.lcd    = lcd
+        self.idle   = load_frame(idle_path)
+        self.frames = [load_frame(p) for p in frame_paths]
+        self.fps    = max(1.0, float(fps))
 
-        # idle 프레임 로드 (GIF 포함)
-        self.idle_frames: List[_Frame] = load_frames(idle_path, frame_sec)
-
-        # detect 프레임 로드 (여러 파일 연결)
-        self.det_frames: List[_Frame] = []
-        for p in frame_paths:
-            self.det_frames.extend(load_frames(p, frame_sec))
-
-        self._lock        = threading.Lock()
-        self._detecting   = False      # detect 재생 중 여부
-        self._stop_idle   = threading.Event()
-        self._idle_thread: Optional[threading.Thread] = None
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+        self._lock   = threading.Lock()
+        self._active = False
 
     def start(self) -> None:
-        """Idle GIF를 백그라운드에서 무한 루프 재생합니다."""
-        self._stop_idle.clear()
-        self._idle_thread = threading.Thread(
-            target=self._run_idle_loop, daemon=True
-        )
-        self._idle_thread.start()
+        """Display the idle frame immediately."""
+        self.lcd.show(self.idle)
 
     def trigger(self) -> None:
-        """Detect 애니메이션을 1회 재생 후 idle로 복귀 (비블로킹).
+        """Spawn a daemon thread that plays the animation once (non-blocking).
 
-        이미 재생 중이면 무시합니다.
+        Duplicate triggers while an animation is running are silently ignored.
         """
-        with self._lock:
-            if self._detecting:
-                return
-            self._detecting = True
-
-        threading.Thread(target=self._run_detect, daemon=True).start()
+        threading.Thread(target=self._run_event, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    def _run_idle_loop(self) -> None:
-        """Idle 프레임을 무한 반복 표시합니다. _detecting 중에는 건너뜁니다."""
-        while not self._stop_idle.is_set():
-            for img, dur in self.idle_frames:
-                if self._stop_idle.is_set():
-                    return
-                if not self._detecting:
-                    self.lcd.show(img)
-                time.sleep(dur)
+    def _run_event(self) -> None:
+        with self._lock:
+            if self._active:
+                return
+            self._active = True
 
-    def _run_detect(self) -> None:
-        """Detect 프레임을 1회 재생하고 idle 루프로 복귀합니다."""
         try:
-            for img, dur in self.det_frames:
-                self.lcd.show(img)
-                time.sleep(dur)
+            dt = 1.0 / self.fps
+            for frame in self.frames:
+                self.lcd.show(frame)
+                time.sleep(dt)
         finally:
+            self.lcd.show(self.idle)
             with self._lock:
-                self._detecting = False
+                self._active = False
+
+
+class GifAnimator:
+    """Plays a GIF file once on detection, then shows a black screen.
+
+    Usage
+    -----
+    animator = GifAnimator(
+        lcd      = LCD(),
+        gif_path = Path("output_feature/images/bless_you.gif"),
+    )
+    animator.start()    # show black screen initially
+    animator.trigger()  # play GIF once, then back to black (non-blocking)
+
+    Parameters
+    ----------
+    lcd        : LCD instance.
+    gif_path   : Path to the GIF file.
+    fade       : Enable fade in/out effect (default False).
+                 Enable only after verifying basic playback works.
+    fade_steps : Number of frames over which fade in/out is applied.
+    """
+
+    def __init__(
+        self,
+        lcd: "LCD",
+        gif_path: Path,
+        fade: bool = False,
+        fade_steps: int = 5,
+    ):
+        self.lcd        = lcd
+        self.fade       = fade
+        self.fade_steps = fade_steps
+
+        self._black = Image.new("RGB", (240, 240), (0, 0, 0))
+
+        # Load GIF frames with per-frame duration
+        self._frames: List[tuple] = []
+        gif = Image.open(gif_path)
+        for frame in ImageSequence.Iterator(gif):
+            img = frame.copy().convert("RGB").resize((240, 240))
+            duration_ms = frame.info.get("duration", 100)
+            self._frames.append((img, duration_ms / 1000.0))
+
+        self._lock   = threading.Lock()
+        self._active = False
+
+    def start(self) -> None:
+        """Show black screen initially."""
+        self.lcd.show(self._black)
+
+    def trigger(self) -> None:
+        """Spawn a daemon thread that plays the GIF once (non-blocking).
+
+        Duplicate triggers while the GIF is playing are silently ignored.
+        After playback the LCD is set to black.
+        """
+        threading.Thread(target=self._run_event, daemon=True).start()
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _blend_fade(self, img: Image.Image, alpha: float) -> Image.Image:
+        """Blend image with black (alpha=0 → black, alpha=1 → original)."""
+        return Image.blend(self._black, img, max(0.0, min(1.0, alpha)))
+
+    def _run_event(self) -> None:
+        with self._lock:
+            if self._active:
+                return
+            self._active = True
+
+        try:
+            total = len(self._frames)
+            for i, (img, duration) in enumerate(self._frames):
+                if self.fade:
+                    if i < self.fade_steps:
+                        img = self._blend_fade(img, (i + 1) / self.fade_steps)
+                    elif i >= total - self.fade_steps:
+                        img = self._blend_fade(img, (total - i) / self.fade_steps)
+                self.lcd.show(img)
+                time.sleep(duration)
+        finally:
+            self.lcd.show(self._black)
+            with self._lock:
+                self._active = False

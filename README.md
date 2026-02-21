@@ -23,30 +23,36 @@ This project consists of two main components:
 
 ```
 sneeze_detection/
-├── README.md                                   # This file
-├── Net_spectogram.ipynb                        # Initial MFCC exploration
-├── sneeze_detection_lightweight.ipynb          # Model training notebook
-├── save_random_pickles.py                      # Data loading utilities
-├── realtime_detection/                         # Real-time detection system
-│   ├── README.md                               # Detailed documentation
-│   ├── main.py                                 # Main entry point
-│   ├── modules/                                # Core modules
-│   │   ├── audio_capture.py                   # Microphone input
-│   │   ├── preprocessing.py                   # Audio preprocessing
-│   │   ├── mfcc_extractor.py                  # MFCC extraction
-│   │   ├── model_inference.py                 # Model inference
-│   │   └── output_handler.py                  # Output handling
-│   ├── utils/                                  # Utilities
-│   │   ├── config.py                          # Configuration
-│   │   └── model_definition.py                # Model architecture
-│   └── requirements.txt                       # Dependencies
-├── models/                                     # Trained models
-│   └── best_model.pth                         # Trained model weights
-├── datasets/                                   # Training data
-│   └── *.wav                                  # Sneeze audio samples
-└── esc-50/                                     # ESC-50 dataset
-    ├── audio/                                 # Audio files
-    └── meta/                                  # Metadata
+├── README.md
+├── src/                                        # RPi deployment (v4, modular)
+│   ├── main.py                                 # Entry point (local / network mode)
+│   ├── v4_model.tflite                         # TFLite model weights
+│   ├── v4_norm_stats.npz                       # Z-score normalisation statistics
+│   ├── communication/                          # Unified audio-input layer
+│   │   ├── send.py                             # AudioSender  — mic → UDP stream
+│   │   ├── recv.py                             # NetworkMicStream — UDP → mic API
+│   │   ├── README.md                           # Communication module docs
+│   │   ├── example_local.py                    # Local mic example
+│   │   └── example_network.py                  # Network sender/receiver example
+│   ├── microphone/
+│   │   └── mic_input.py                        # MicrophoneStream (sounddevice)
+│   ├── ml_model/
+│   │   ├── config.py                           # All constants (SR, thresholds, …)
+│   │   ├── preprocessing.py                    # rms, logmel, preproc, load_stats
+│   │   └── model.py                            # LiteModel (TFLite wrapper)
+│   ├── output_feature/
+│   │   ├── speaker_output.py                   # SpeakerOutput (alert / beep)
+│   │   └── lcd_output.py                       # LCD + LCDAnimator (ST7789)
+│   └── tests/
+│       ├── test_ml_model.py                    # Preprocessing & inference tests
+│       └── test_communication.py               # UDP loopback tests
+├── legacy_code/                                # v1–v4 reference implementations
+│   └── output/v4/
+│       ├── test_no_saving_v4.py
+│       └── test_saving_v4.py
+├── raspi/sneeze-detection/
+│   └── real_time_detection.py                  # Original RPi script (reference)
+└── sneeze_detection_lightweight.ipynb          # Model training notebook
 ```
 
 ## 🚀 Quick Start
@@ -59,23 +65,112 @@ Open and run the Jupyter notebook:
 jupyter notebook sneeze_detection_lightweight.ipynb
 ```
 
-This will:
-- Load and preprocess audio data
-- Extract MFCC features with augmentation
-- Train the LightweightSneezeCNN model
-- Save the trained model to `models/best_model.pth`
+### 2. Real-time Detection (`src/`)
 
-### 2. Real-time Detection
+Place the model files in `src/` before running:
 
-Navigate to the real-time detection system:
-
-```bash
-cd realtime_detection
-pip install -r requirements.txt
-python main.py
+```
+src/
+├── v4_model.tflite
+└── v4_norm_stats.npz
 ```
 
-For detailed usage, see [`realtime_detection/README.md`](realtime_detection/README.md).
+Also create the asset directory (images + sound for LCD and speaker):
+
+```
+~/Documents/sneeze-detection/
+    images/  idle.png  detect1.png  detect2.png  detect3.png
+    sounds/  bless_you.wav
+```
+
+---
+
+#### Mode A — Local microphone (single device)
+
+The simplest setup: microphone and inference run on the same Raspberry Pi.
+
+```bash
+cd src
+
+# With LCD
+python main.py
+
+# Without LCD (no ST7789 hardware attached)
+python main.py --no-lcd
+```
+
+---
+
+#### Mode B — Network streaming (two devices)
+
+Use this when the **microphone is on one device** (e.g. a PC or second RPi) and
+**inference runs on another** (e.g. the main Raspberry Pi).
+
+```
+[Device A — Sender]                [Device B — Receiver / RPi]
+  has microphone                     runs inference + LCD + speaker
+
+  python send.py                     python main.py --network
+    --host <Device-B-IP>               --recv-host 0.0.0.0
+    --port 12345                       --recv-port 12345
+                                       --no-lcd          ← optional
+```
+
+**Device A — Sender** (machine with microphone):
+
+```bash
+cd src
+python communication/send.py --host 192.168.1.42 --port 12345
+```
+
+**Device B — Receiver** (Raspberry Pi running inference):
+
+```bash
+cd src
+python main.py --network --recv-host 0.0.0.0 --recv-port 12345
+```
+
+Loopback test on a single machine (both terminals in `src/`):
+
+```bash
+# Terminal 1
+python main.py --network --no-lcd
+
+# Terminal 2
+python communication/send.py --host 127.0.0.1 --port 12345
+```
+
+---
+
+#### `main.py` — All arguments
+
+| Argument | Default | Description |
+| --- | --- | --- |
+| *(none)* | — | Local microphone, LCD enabled |
+| `--network` | off | Receive audio from `send.py` over UDP |
+| `--recv-host` | `0.0.0.0` | `[--network]` UDP bind address |
+| `--recv-port` | `12345` | `[--network]` UDP port |
+| `--no-lcd` | off | Disable the ST7789 LCD driver |
+
+#### `send.py` — All arguments
+
+| Argument | Default | Description |
+| --- | --- | --- |
+| `--host` | `127.0.0.1` | Destination IP (receiver device) |
+| `--port` | `12345` | Destination UDP port |
+| `--capture-sr` | `48000` | Microphone sample rate (Hz) |
+| `--block-ms` | `10` | Packet size in ms (lower = less latency) |
+| `--device` | system default | sounddevice input device index or name |
+
+---
+
+### 3. Tests
+
+```bash
+cd src
+python tests/test_ml_model.py        # preprocessing + TFLite inference
+python tests/test_communication.py   # UDP loopback (no mic required)
+```
 
 ## 📊 Model Performance
 
