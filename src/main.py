@@ -39,7 +39,7 @@ except ImportError:
 
 from ml_model import LiteModel, load_stats, preproc, resample_to_model_sr, rms
 from ml_model import config as cfg
-from communication import MicrophoneStream, NetworkMicStream
+from communication import MicrophoneStream, NetworkMicStream, WebSocketMicStream
 from output_feature import LCD, GifAnimator
 
 # LLM + TTS integration (falls back to static WAV playback if API keys are missing)
@@ -85,6 +85,14 @@ def play_bless_wav_async(wav_path: Path) -> None:
 
 
 def _build_mic(args):
+    if args.websocket:
+        return WebSocketMicStream(
+            host=args.ws_host,
+            port=args.ws_port,
+            capture_sr=cfg.CAPTURE_SR,
+            frame_sec=cfg.FRAME_SEC,
+            pre_seconds=0.0,
+        )
     if args.network:
         return NetworkMicStream(
             host=args.recv_host,
@@ -228,9 +236,14 @@ class HybridBurstDetector:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Real-time sneeze detector (hybrid burst)")
-    ap.add_argument("--network", action="store_true")
+    ap.add_argument("--network", action="store_true",
+                    help="Receive audio over UDP from send.py")
     ap.add_argument("--recv-host", default="0.0.0.0")
     ap.add_argument("--recv-port", type=int, default=12345)
+    ap.add_argument("--websocket", action="store_true",
+                    help="Receive audio over WebSocket from browser (app/index.html)")
+    ap.add_argument("--ws-host", default="0.0.0.0")
+    ap.add_argument("--ws-port", type=int, default=8080)
     ap.add_argument("--no-lcd", action="store_true")
     ap.add_argument(
         "--lang",
@@ -282,9 +295,12 @@ def main() -> None:
 
     # mic
     mic = _build_mic(args)
-    mode = (f"network bind={args.recv_host}:{args.recv_port}"
-            if args.network else
-            f"local device={cfg.INPUT_DEVICE} sr={cfg.CAPTURE_SR}")
+    if args.websocket:
+        mode = f"websocket bind={args.ws_host}:{args.ws_port}"
+    elif args.network:
+        mode = f"network bind={args.recv_host}:{args.recv_port}"
+    else:
+        mode = f"local device={cfg.INPUT_DEVICE} sr={cfg.CAPTURE_SR}"
     print(f"Microphone: {mode}")
 
     # LCD

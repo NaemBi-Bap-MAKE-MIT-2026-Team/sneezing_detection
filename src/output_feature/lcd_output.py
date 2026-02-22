@@ -46,7 +46,7 @@ class LCD:
             raise RuntimeError(f"LCD driver (st7789) import failed: {e}")
 
         self.disp = st7789.ST7789(
-            rotation=90,
+            rotation=180,
             port=0,
             cs=1,
             dc=9,
