@@ -96,6 +96,7 @@ def _build_mic(args):
             capture_sr=cfg.CAPTURE_SR,
             frame_sec=cfg.FRAME_SEC,
             pre_seconds=0.0,
+            ssl=args.ssl,
         )
     if args.network:
         return NetworkMicStream(
@@ -248,6 +249,9 @@ def main() -> None:
                     help="Receive audio over WebSocket from browser (app/index.html)")
     ap.add_argument("--ws-host", default="0.0.0.0")
     ap.add_argument("--ws-port", type=int, default=8080)
+    ap.add_argument("--ssl", action="store_true",
+                    help="Serve WebSocket/HTTP over HTTPS/WSS with a self-signed cert "
+                         "(required for iOS Safari and macOS Safari)")
     ap.add_argument("--no-lcd", action="store_true")
     ap.add_argument(
         "--lang",

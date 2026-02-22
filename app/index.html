@@ -63,28 +63,6 @@
       display: block;
     }
 
-    .input-row {
-      display: flex;
-      gap: 10px;
-      align-items: flex-end;
-    }
-    .input-group { display: flex; flex-direction: column; }
-    .input-group.grow { flex: 1; }
-
-    input[type="text"], input[type="number"] {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--text);
-      font-size: 1rem;
-      font-family: var(--font);
-      padding: 10px 12px;
-      width: 100%;
-      outline: none;
-      transition: border-color 0.15s;
-    }
-    input:focus { border-color: var(--accent); }
-
     /* status pill */
     .status-pill {
       display: flex;
@@ -181,19 +159,6 @@
   <h1>Sneeze <span>Detector</span></h1>
 
   <div class="card">
-    <div>
-      <label>Raspberry Pi Address</label>
-      <div class="input-row">
-        <div class="input-group grow">
-          <input type="text" id="inp-host" placeholder="192.168.x.x" value="" autocomplete="off" autocorrect="off" />
-        </div>
-        <div class="input-group" style="width:96px">
-          <label>Port</label>
-          <input type="number" id="inp-port" value="8080" min="1" max="65535" />
-        </div>
-      </div>
-    </div>
-
     <div class="status-pill" id="status-pill">
       <div class="status-dot"></div>
       <span id="status-text">Disconnected</span>
@@ -220,8 +185,9 @@
   </div>
 
   <p class="note">
-    Open this page from Chrome on Android over HTTP.<br/>
-    iOS requires HTTPS (serve via nginx + self-signed cert).
+    Android Chrome: use HTTP — no extra setup needed.<br/>
+    iOS / macOS Safari: start server with <code style="color:var(--accent)">--ssl</code> flag,
+    then accept the certificate warning on first visit.
   </p>
 
   <script>
@@ -235,8 +201,6 @@
     const PROC_BUFSIZE = 8192;    // ~170 ms @ 48 kHz
 
     // ─── DOM ──────────────────────────────────────────────────────────────
-    const inpHost    = document.getElementById("inp-host");
-    const inpPort    = document.getElementById("inp-port");
     const btnConnect = document.getElementById("btn-connect");
     const pillEl     = document.getElementById("status-pill");
     const statusText = document.getElementById("status-text");
@@ -295,13 +259,10 @@
     });
 
     async function connect() {
-      const host = inpHost.value.trim();
-      const port = parseInt(inpPort.value, 10) || 8080;
-
-      if (!host) {
-        alert("Please enter the Raspberry Pi IP address.");
-        return;
-      }
+      // Derive WebSocket host/port from the page's own URL.
+      // HTTP server runs on ws_port+1, so WebSocket port = http_port - 1.
+      const host = window.location.hostname;
+      const port = parseInt(window.location.port, 10) || 8080;
 
       btnConnect.disabled = true;
 
@@ -317,7 +278,8 @@
 
       // ── Step 2: connect WebSocket ──
       setStatus("connecting", "Connecting…");
-      const url = `ws://${host}:${port}/audio`;
+      const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+      const url = `${wsProto}//${host}:${port}/audio`;
       ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
 
@@ -371,6 +333,14 @@
     // Call this INSIDE a user-gesture handler (click) to satisfy autoplay policy.
     async function startAudio() {
       try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error(
+            location.protocol === "https:"
+              ? "getUserMedia not supported in this browser."
+              : "Mic requires HTTPS. Open this page over https:// or use Chrome on Android."
+          );
+        }
+
         audioCtx = new (window.AudioContext || window.webkitAudioContext)({
           sampleRate: CAPTURE_SR,
           latencyHint: "interactive",
