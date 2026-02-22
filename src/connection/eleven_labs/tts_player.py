@@ -4,6 +4,7 @@ import json
 import hashlib
 from pathlib import Path
 import requests
+import pandas as pd
 
 # ===== 설정 =====
 OUTPUT_DIR = Path("output-feature/sounds")
