@@ -1,21 +1,40 @@
+"""
+connection/elven_labs/tts_player.py
+-------------------------------------
+ElevenLabs REST API를 사용한 WAV 생성 및 저장 (통합 버전)
+
+파이프라인:
+1. GPS: 위치 조회
+2. Weather: 날씨 정보 조회
+3. Gemini: 건강 멘트 생성
+4. ElevenLabs TTS: 음성 생성 및 WAV 저장
+
+Usage
+-----
+# 생성 및 저장만
+generator = ElevenLabsTTSGenerator()
+wav_path = generator.generate_and_save("Stay warm!", "./sounds")
+
+# 생성, 저장, 재생
+player = ElevenLabsTTSPlayer(output_dir="./sounds")
+player.speak("Stay warm and healthy!")
+"""
+
 import os
-import time
 import json
+import time
 import hashlib
-from pathlib import Path
 import requests
-import pandas as pd
+import tempfile
+import subprocess
+from pathlib import Path
+from typing import Optional
 
-# ===== 설정 =====
-OUTPUT_DIR = Path("output-feature/sounds")
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-ELEVEN_API_KEY = os.environ["ELEVENLABS_API_KEY"]
-VOICE_ID = "hpp4J3VqNfWAUOO0d1Us"
-BASE_URL = "https://api.elevenlabs.io"
-
-# 영어만이면 multilingual도 가능하지만, 효민님 환경에 맞게 그대로 두셔도 됩니다.
-MODEL_ID = "eleven_multilingual_v2"
+# ===== ElevenLabs REST API 설정 =====
+ELEVEN_BASE_URL = "https://api.elevenlabs.io"
+ELEVEN_VOICE_ID = "hpp4J3VqNfWAUOO0d1Us"
+DEFAULT_MODEL_ID = "eleven_multilingual_v2"
 
 VOICE_SETTINGS = {
     "stability": 0.75,
@@ -25,86 +44,165 @@ VOICE_SETTINGS = {
     "speed": 1.0
 }
 
-MAX_PROMPTS = 50
-MAX_CHARS_PER_PROMPT = 800  # 너무 길면 품질/비용/지연이 흔들려서 안전 상한 권장
+MAX_CHARS_PER_PROMPT = 800
 
-# ===== 유틸 =====
-def text_hash8(text: str) -> str:
+
+def _text_hash(text: str) -> str:
+    """텍스트의 짧은 해시값 반환"""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
 
-def atomic_write_bytes(final_path: Path, data: bytes) -> None:
-    tmp_path = final_path.with_suffix(final_path.suffix + ".tmp")
+
+def _atomic_write(path: Path, data: bytes) -> None:
+    """원자적 파일 쓰기"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
     with open(tmp_path, "wb") as f:
         f.write(data)
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp_path, final_path)
+    os.replace(tmp_path, path)
 
-def eleven_tts(text: str, output_format: str) -> bytes:
-    # Convert endpoint: /v1/text-to-speech/{voice_id}
-    # output_format을 바꿔가며 WAV를 받을 수 있습니다.
-    # 공식 API 레퍼런스 참고 :contentReference[oaicite:6]{index=6}
-    url = f"{BASE_URL}/v1/text-to-speech/{VOICE_ID}"
-    headers = {
-        "xi-api-key": ELEVEN_API_KEY,
-        "Content-Type": "application/json",
-        # WAV로 받겠다는 의도를 명확히 합니다(서버는 output_format이 더 중요)
-        "Accept": "audio/wav",
-    }
-    payload = {
-        "text": text,
-        "model_id": MODEL_ID,
-        "voice_settings": VOICE_SETTINGS,
-        "output_format": output_format,
-    }
-    r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=60)
-    r.raise_for_status()
-    return r.content
 
-# ===== Gemini 프롬프트 생성(효민님 구현으로 교체) =====
-def generate_prompts_gemini() -> list[str]:
-    # TODO: 효민님이 사용하는 Gemini SDK/REST 호출로 교체
-    # 반드시 영어만 나오도록 system prompt를 고정하시고,
-    # 리스트 길이는 최대 50을 넘기지 않게 하십시오.
-    return [
-        "Short test prompt one.",
-        "Short test prompt two.",
-    ]
+class ElevenLabsTTSGenerator:
+    """ElevenLabs REST API를 사용한 WAV 생성"""
 
-def main():
-    prompts = generate_prompts_gemini()
-    prompts = [p.strip() for p in prompts if p and p.strip()]
-    prompts = prompts[:MAX_PROMPTS]
+    def __init__(self, api_key: Optional[str] = None, voice_id: str = ELEVEN_VOICE_ID):
+        self.api_key = api_key or os.environ.get("ELEVENLABS_API_KEY", "")
+        if not self.api_key:
+            raise ValueError(
+                "❌ ELEVENLABS_API_KEY가 없습니다. "
+                "환경 변수를 설정하거나 .env 파일을 확인하세요."
+            )
+        self.voice_id = voice_id
+        self.base_url = ELEVEN_BASE_URL
 
-    run_ts = time.strftime("%Y%m%d_%H%M%S")
-
-    saved = []
-    for idx, text in enumerate(prompts, start=1):
-        # 길이 상한
+    def generate_wav(self, text: str, output_format: str = "wav_48000") -> bytes:
+        """WAV 오디오 생성"""
         if len(text) > MAX_CHARS_PER_PROMPT:
             text = text[:MAX_CHARS_PER_PROMPT].rstrip()
+            print(f"[TTSGenerator] ⚠ 텍스트 길이 제한 적용")
 
-        h = text_hash8(text)
-        filename = f"{run_ts}_{idx:02d}_{h}.wav"
-        out_path = OUTPUT_DIR / filename
-
-        # 48k 시도 후 44.1k 폴백
-        try:
-            audio = eleven_tts(text, output_format="wav_48000")
-        except Exception:
-            audio = eleven_tts(text, output_format="wav_44100")
-
-        atomic_write_bytes(out_path, audio)
-        saved.append({
-            "index": idx,
-            "file": str(out_path),
-            "hash8": h,
+        url = f"{self.base_url}/v1/text-to-speech/{self.voice_id}"
+        headers = {
+            "xi-api-key": self.api_key,
+            "Content-Type": "application/json",
+        }
+        payload = {
             "text": text,
-        })
+            "model_id": DEFAULT_MODEL_ID,
+            "voice_settings": VOICE_SETTINGS,
+            "output_format": output_format,
+        }
 
-    # 실행 결과 기록(나중에 재생/디버깅에 중요)
-    manifest_path = OUTPUT_DIR / f"{run_ts}_manifest.json"
-    atomic_write_bytes(manifest_path, json.dumps(saved, ensure_ascii=False, indent=2).encode("utf-8"))
+        try:
+            print(f"[TTSGenerator] 🎤 API 호출 중... ({len(text)} chars)")
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+            print(f"[TTSGenerator] ✓ WAV 생성됨 ({len(response.content)} bytes)")
+            return response.content
+        except Exception as e:
+            if output_format == "wav_48000":
+                print(f"[TTSGenerator] ⚠ 48kHz 실패 — 44.1kHz로 재시도")
+                return self.generate_wav(text, "wav_44100")
+            raise
+
+    def generate_and_save(self, text: str, output_dir: Optional[Path] = None) -> Path:
+        """WAV 생성 및 저장"""
+        if output_dir is None:
+            output_dir = Path("tts_output")
+        
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        text_hash = _text_hash(text)
+        filename = f"{timestamp}_{text_hash}.wav"
+        output_path = output_dir / filename
+
+        audio_bytes = self.generate_wav(text)
+        _atomic_write(output_path, audio_bytes)
+
+        print(f"[TTSGenerator] ✓ 저장됨: {output_path}")
+        return output_path
+
+
+class ElevenLabsTTSPlayer:
+    """ElevenLabs TTS 생성, 저장, 재생"""
+
+    def __init__(self, api_key: Optional[str] = None, output_dir: Optional[Path] = None):
+        self.generator = ElevenLabsTTSGenerator(api_key=api_key)
+        self.output_dir = Path(output_dir) if output_dir else None
+        self._player_cmd = self._find_player()
+
+    def _find_player(self) -> Optional[list]:
+        """오디오 플레이어 자동 감지"""
+        player_commands = [
+            ["aplay", "-q"],
+            ["mpg123", "-q"],
+            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"],
+        ]
+        for cmd in player_commands:
+            try:
+                subprocess.run(
+                    [cmd[0], "--version"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=2,
+                )
+                print(f"[TTSPlayer] ✓ 플레이어: {cmd[0]}")
+                return cmd
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                continue
+        return None
+
+    def speak(self, text: str, save: bool = True, play: bool = True) -> Optional[Path]:
+        """WAV 생성, 저장, 재생"""
+        if not text or not text.strip():
+            return None
+
+        try:
+            # 1. 생성 및 저장
+            if self.output_dir and save:
+                output_path = self.generator.generate_and_save(text, self.output_dir)
+            else:
+                audio_bytes = self.generator.generate_wav(text)
+                output_path = None
+
+            # 2. 재생
+            if play and output_path and output_path.exists():
+                self._play_file(output_path)
+
+            return output_path
+        except Exception as e:
+            print(f"[TTSPlayer] ❌ {e}")
+            return None
+
+    def _play_file(self, path: Path) -> None:
+        """파일 재생"""
+        if not self._player_cmd:
+            print(f"[TTSPlayer] ⚠ 플레이어 없음")
+            return
+        try:
+            subprocess.run(
+                self._player_cmd + [str(path)],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+            print(f"[TTSPlayer] ✓ 재생됨")
+        except Exception as e:
+            print(f"[TTSPlayer] ⚠ 재생 실패: {e}")
+
 
 if __name__ == "__main__":
-    main()
+    import sys
+    text = sys.argv[1] if len(sys.argv) > 1 else "Stay warm and healthy!"
+    
+    try:
+        generator = ElevenLabsTTSGenerator()
+        wav_path = generator.generate_and_save(text, Path("tts_output"))
+        print(f"✓ 완료: {wav_path}")
+    except ValueError as e:
+        print(f"❌ {e}")

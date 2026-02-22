@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Optional
 
 from .gemini.gemini_comment import GeminiCommentGenerator
-from .elven_labs.tts_player import ElevenLabsTTSPlayer
+from .eleven_labs.tts_player import ElevenLabsTTSPlayer
 
 try:
     from .gps.gps import GPSLocator
@@ -72,9 +72,14 @@ class BlessYouFlow:
         self._message_cache: list[str] = []
 
         self._gemini = GeminiCommentGenerator(api_key=gemini_api_key)
+        
+        # TTS 저장 경로 설정
+        tts_output_dir = Path(__file__).resolve().parent.parent / "output_feature" / "sounds"
+        tts_output_dir.mkdir(parents=True, exist_ok=True)
+        
         self._tts = ElevenLabsTTSPlayer(
             api_key=elevenlabs_api_key,
-            voice_id=elevenlabs_voice_id,
+            output_dir=tts_output_dir,
         )
 
         if self._enable_context:
@@ -182,12 +187,17 @@ class BlessYouFlow:
             print(f"[BlessYouFlow] 💬 {comment}")
         return comment
 
-    def _stage3_speak(self, comment: str) -> None:
-        """[Stage 3] ElevenLabs TTS로 멘트를 재생합니다."""
+    def _stage3_speak(self, comment: str) -> Optional[Path]:
+        """[Stage 3] ElevenLabs TTS로 멘트를 생성 및 저장합니다."""
         if comment:
-            self._tts.speak(comment)
+            # TTS 생성, 저장, 재생 (save=True, play=False로 저장만 진행)
+            wav_path = self._tts.speak(comment, save=True, play=False)
+            if wav_path:
+                print(f"[BlessYouFlow] 🎵 WAV 저장: {wav_path}")
+            return wav_path
         else:
             print("[BlessYouFlow] ⚠ 멘트 없음 — TTS 건너뜀.")
+            return None
 
     # ------------------------------------------------------------------
     # Private helpers

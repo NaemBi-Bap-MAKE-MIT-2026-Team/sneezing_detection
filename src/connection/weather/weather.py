@@ -36,7 +36,7 @@ except ImportError:
 try:
     from ml_model import config as cfg
 except ImportError:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
     from ml_model import config as cfg
 
 

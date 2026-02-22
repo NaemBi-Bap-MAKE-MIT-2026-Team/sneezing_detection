@@ -133,3 +133,6 @@ detected_wavs/
 *.keras
 *.tflite
 *.npz
+
+# Added by ggshield
+.cache_ggshield

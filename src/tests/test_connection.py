@@ -182,7 +182,7 @@ def test_elevenlabs_generate_audio_bytes():
         _skip(name, "ELEVENLABS_API_KEY not set")
         return
     try:
-        from connection.elven_labs.tts_player import ElevenLabsTTSPlayer
+        from connection.eleven_labs.tts_player import ElevenLabsTTSPlayer
         player = ElevenLabsTTSPlayer()
         t0 = time.time()
         audio_bytes = player._generate_audio("Stay healthy!")
@@ -208,7 +208,7 @@ def test_elevenlabs_speak_short_text():
         _skip(name, "--no-audio 플래그로 재생 건너뜀")
         return
     try:
-        from connection.elven_labs.tts_player import ElevenLabsTTSPlayer
+        from connection.eleven_labs.tts_player import ElevenLabsTTSPlayer
         player = ElevenLabsTTSPlayer()
         t0 = time.time()
         player.speak("Stay warm and healthy!")
@@ -223,7 +223,7 @@ def test_elevenlabs_player_found():
     """시스템에 MP3 플레이어(mpg123 등)가 설치되어 있는지 확인."""
     name = "system — MP3 player available (mpg123 / ffplay / mplayer)"
     try:
-        from connection.elven_labs.tts_player import _find_player
+        from connection.eleven_labs.tts_player import _find_player
         cmd = _find_player()
         if cmd is not None:
             _pass(name, f"player='{cmd[0]}'")
