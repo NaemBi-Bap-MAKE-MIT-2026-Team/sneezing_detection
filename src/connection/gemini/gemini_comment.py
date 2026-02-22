@@ -147,7 +147,7 @@ class GeminiCommentGenerator:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model_name: str = "gemini-2.0-flash",
+        model_name: str = "gemini-2.5-flash",
         temperature: float = 0.9,
         max_output_tokens: int = 2048,
     ):
@@ -174,7 +174,7 @@ class GeminiCommentGenerator:
 
     def generate_batch(
         self,
-        num_messages: int = 30,
+        num_messages: int = 1,
         language: str = "en",
         context: Optional[dict] = None,
     ) -> list[str]:

@@ -5,9 +5,11 @@ connection/bless_you_flow.py
 
 Pipeline
 --------
-Stage 1  bless_you.wav 재생  +  GPS + 날씨/대기질 조회  (병렬)
-Stage 2  Gemini API로 건강 멘트 선택/생성  (배치 캐시 활용)
-Stage 3  ElevenLabs TTS로 멘트 재생
+[시작 시] initialize()  — blocking
+  GPS 위치 조회 → 날씨/대기질 조회 → Gemini 멘트 생성 → ElevenLabs TTS WAV 저장
+
+[감지 시] run() / run_async()
+  사전 생성된 TTS WAV 재생  +  다음 WAV 백그라운드 생성 (동시)
 
 Usage
 -----
@@ -17,8 +19,8 @@ flow = BlessYouFlow(
     elevenlabs_api_key="...",
     language="en",
 )
-flow.run()          # 블로킹 (전체 흐름 완료까지 대기)
-flow.run_async()    # 논블로킹 (백그라운드 스레드)
+flow.initialize()   # Detection 전 blocking 호출 (첫 TTS WAV 준비)
+flow.run_async()    # 감지 후 논블로킹 호출 (WAV 재생 + 다음 WAV 생성)
 """
 
 import subprocess
@@ -63,7 +65,7 @@ class BlessYouFlow:
         elevenlabs_voice_id: str = "Rachel",
         language: str = "en",
         enable_context: bool = True,
-        num_messages: int = 30,
+        num_messages: int = 1,
     ):
         self.bless_wav_path = Path(bless_wav_path)
         self.language = language
@@ -72,11 +74,12 @@ class BlessYouFlow:
         self._message_cache: list[str] = []
 
         self._gemini = GeminiCommentGenerator(api_key=gemini_api_key)
-        
-        # TTS 저장 경로 설정
+
+        # TTS 저장 경로 설정 (고정 파일명으로 덮어쓰기)
         tts_output_dir = Path(__file__).resolve().parent.parent / "output_feature" / "sounds"
         tts_output_dir.mkdir(parents=True, exist_ok=True)
-        
+        self._tts_wav_path = tts_output_dir / "tts_bless_you.wav"
+
         self._tts = ElevenLabsTTSPlayer(
             api_key=elevenlabs_api_key,
             output_dir=tts_output_dir,
@@ -89,25 +92,53 @@ class BlessYouFlow:
             self._gps = None
             self._weather = None
 
+        self._next_wav: Optional[Path] = None  # 사전 생성된 TTS WAV 경로
+        self._lock = threading.Lock()           # _next_wav 스레드 안전 접근
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def run(self) -> None:
-        """파이프라인 전체를 블로킹으로 실행합니다.
+    def initialize(self) -> bool:
+        """시작 시 blocking으로 전체 파이프라인을 실행하여 첫 TTS WAV를 사전 준비합니다.
 
-        Stage 1  WAV 재생 + GPS/날씨 조회 (병렬)
-        Stage 2  Gemini 건강 멘트 선택/생성
-        Stage 3  ElevenLabs TTS 재생
+        main.py의 Detection 루프 시작 전에 호출하세요.
+
+        Returns
+        -------
+        bool
+            TTS WAV 사전 생성 성공 여부.
         """
-        # Stage 1 ─ WAV 재생과 컨텍스트 조회를 병렬 실행
-        ctx = self._stage1_wav_and_context()
+        print("[BlessYouFlow] 🔄 초기화 중... (GPS → 날씨 → Gemini → ElevenLabs)")
+        self._do_prefetch()
+        ok = self._next_wav is not None
+        if ok:
+            print("[BlessYouFlow] ✓ 초기화 완료 — TTS 준비됨")
+        else:
+            print("[BlessYouFlow] ⚠ TTS 사전 생성 실패 — fallback WAV로 동작")
+        return ok
 
-        # Stage 2 ─ 캐시에서 멘트 꺼내거나 Gemini API로 생성
-        comment = self._stage2_get_comment(ctx)
+    def run(self) -> None:
+        """재채기 감지 후 사전 생성된 TTS WAV를 재생하고 다음 WAV를 백그라운드에서 준비합니다.
 
-        # Stage 3 ─ ElevenLabs TTS 재생
-        self._stage3_speak(comment)
+        사전 생성된 WAV(_next_wav)를 꺼내 재생하는 동시에,
+        새로운 GPS/날씨/Gemini/ElevenLabs 파이프라인을 백그라운드에서 시작합니다.
+        """
+        # 사전 생성된 WAV 꺼내기 (thread-safe)
+        with self._lock:
+            wav_to_play = self._next_wav
+            self._next_wav = None
+
+        # 다음 WAV 준비를 백그라운드에서 시작 (WAV 재생과 동시에 실행)
+        threading.Thread(target=self._do_prefetch, daemon=True).start()
+
+        # 현재 WAV 재생 (이 background thread 내에서 blocking)
+        if wav_to_play and wav_to_play.exists():
+            print(f"[BlessYouFlow] 🎵 재생: {wav_to_play.name}")
+            self._play_wav(wav_to_play)
+        else:
+            print("[BlessYouFlow] ⚠ TTS WAV 없음 — fallback WAV 재생")
+            self._play_wav(self.bless_wav_path)
 
     def run_async(self) -> threading.Thread:
         """파이프라인을 백그라운드 스레드에서 실행합니다.
@@ -125,25 +156,19 @@ class BlessYouFlow:
     # Stage implementations
     # ------------------------------------------------------------------
 
-    def _stage1_wav_and_context(self) -> Optional[dict]:
-        """[Stage 1] WAV 재생과 GPS/날씨 조회를 병렬로 실행하고 컨텍스트를 반환합니다."""
-        ctx_result: list[Optional[dict]] = []
-        ctx_thread = threading.Thread(
-            target=lambda: ctx_result.append(self._fetch_context()),
-            daemon=True,
-        )
-        ctx_thread.start()
+    def _do_prefetch(self) -> None:
+        """GPS/날씨 조회 → Gemini 멘트 생성 → ElevenLabs TTS WAV 생성/저장.
 
-        self._play_wav(self.bless_wav_path)             # 메인 스레드 블로킹 (WAV 재생)
-        ctx_thread.join(timeout=self._CTX_TIMEOUT)      # WAV 재생 후 컨텍스트 완료 대기
-
-        ctx = ctx_result[0] if ctx_result else None
-        if ctx:
-            print(
-                f"[BlessYouFlow] 📍 {ctx['city']}, {ctx['country']} "
-                f"| {ctx['temperature']}°C | AQI {ctx['aqi_label']}"
-            )
-        return ctx
+        결과를 _next_wav에 저장합니다. initialize() 및 run()에서 호출됩니다.
+        """
+        ctx = self._fetch_context()
+        comment = self._stage2_get_comment(ctx)
+        if comment:
+            wav_path = self._stage3_speak(comment)
+            if wav_path:
+                with self._lock:
+                    self._next_wav = wav_path
+                print(f"[BlessYouFlow] ✓ 다음 TTS WAV 준비됨: {wav_path.name}")
 
     def _stage2_get_comment(self, ctx: Optional[dict]) -> str:
         """[Stage 2] 캐시에서 멘트를 반환하거나, 비었으면 Gemini API로 배치 생성합니다."""
@@ -188,12 +213,13 @@ class BlessYouFlow:
         return comment
 
     def _stage3_speak(self, comment: str) -> Optional[Path]:
-        """[Stage 3] ElevenLabs TTS로 멘트를 생성 및 저장합니다."""
+        """[Stage 3] ElevenLabs TTS로 멘트를 생성하여 고정 경로에 덮어씁니다."""
         if comment:
-            # TTS 생성, 저장, 재생 (save=True, play=False로 저장만 진행)
-            wav_path = self._tts.speak(comment, save=True, play=False)
+            wav_path = self._tts.speak(
+                comment, save=True, play=False, save_as=self._tts_wav_path
+            )
             if wav_path:
-                print(f"[BlessYouFlow] 🎵 WAV 저장: {wav_path}")
+                print(f"[BlessYouFlow] 🎵 WAV 저장: {wav_path.name}")
             return wav_path
         else:
             print("[BlessYouFlow] ⚠ 멘트 없음 — TTS 건너뜀.")
@@ -238,31 +264,40 @@ class BlessYouFlow:
             return None
 
     def _play_wav(self, wav_path: Path) -> None:
-        """aplay로 WAV 파일을 동기 재생합니다 (Linux용)."""
+        """sounddevice로 WAV 파일을 동기 재생합니다."""
         if not wav_path.exists():
             print(f"[BlessYouFlow] ⚠ WAV 없음: {wav_path}")
             return
         try:
-            subprocess.run(["aplay", "-q", str(wav_path)], check=False)
-        except FileNotFoundError:
-            print("[BlessYouFlow] ⚠ aplay 없음 — WAV 건너뜀.")
+            import soundfile as sf
+            import sounddevice as sd
+            data, sr = sf.read(str(wav_path), dtype="float32")
+            sd.play(data, samplerate=sr)
+            sd.wait()
+        except ImportError:
+            print("[BlessYouFlow] ⚠ soundfile/sounddevice 없음 — aplay로 재시도")
+            try:
+                subprocess.run(["aplay", "-q", str(wav_path)], check=False)
+            except Exception as e:
+                print(f"[BlessYouFlow] ⚠ WAV 재생 오류: {e}")
         except Exception as e:
             print(f"[BlessYouFlow] ⚠ WAV 재생 오류: {e}")
 
 
 if __name__ == "__main__":
-    # 단독 실행 테스트
+    # 단독 실행 테스트: initialize() → run() 순서로 전체 파이프라인 검증
     import sys
     from pathlib import Path
 
-    wav = Path(__file__).resolve().parents[2] / "output_feature" / "sounds" / "bless_you.wav"
+    wav = Path(__file__).resolve().parents[1] / "output_feature" / "sounds" / "bless_you.wav"
     lang = sys.argv[1] if len(sys.argv) > 1 else "en"
     print(f"[BlessYouFlow] 테스트 실행 (language={lang})")
     print(f"[BlessYouFlow] WAV: {wav}")
 
     try:
         flow = BlessYouFlow(bless_wav_path=wav, language=lang)
-        flow.run()
+        flow.initialize()  # GPS → 날씨 → Gemini → ElevenLabs (blocking)
+        flow.run()         # TTS WAV 재생 + 다음 WAV 백그라운드 생성
         print("[BlessYouFlow] ✓ 완료")
     except (ValueError, ImportError) as e:
         print(f"[오류] {e}")

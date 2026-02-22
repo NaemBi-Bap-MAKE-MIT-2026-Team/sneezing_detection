@@ -315,11 +315,21 @@ def main() -> None:
         if animator:
             animator.trigger()
         if bless_flow is not None:
-            # bless_you.wav → Gemini 멘트 → ElevenLabs TTS (백그라운드)
+            # 사전 생성된 ElevenLabs TTS WAV 재생 + 다음 WAV 백그라운드 생성
             bless_flow.run_async()
         else:
             # 폴백: 기존 WAV 재생
             play_bless_wav_async(BLESS_WAV)
+
+    # Detection 루프 시작 전 — BlessYouFlow blocking prefetch
+    if bless_flow is not None:
+        print("[main] BlessYouFlow 사전 준비 시작 (Detection 이전에 완료됩니다)...")
+        ok = bless_flow.initialize()
+        if not ok:
+            print("[main] ❌ BlessYouFlow 초기화 실패 — 프로그램을 종료합니다.")
+            print("       Gemini / ElevenLabs API 키 및 사용량을 확인하세요.")
+            raise SystemExit(1)
+        print("[main] ✓ Detection 시작")
 
     print("STREAM START (Ctrl+C to stop)")
     print(f"mode: hybrid burst, burst={BURST_SECONDS}s, hop={HOP_SEC}s")

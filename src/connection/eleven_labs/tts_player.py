@@ -106,18 +106,28 @@ class ElevenLabsTTSGenerator:
                 return self.generate_wav(text, "wav_44100")
             raise
 
-    def generate_and_save(self, text: str, output_dir: Optional[Path] = None) -> Path:
-        """WAV 생성 및 저장"""
-        if output_dir is None:
-            output_dir = Path("tts_output")
-        
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+    def generate_and_save(
+        self,
+        text: str,
+        output_dir: Optional[Path] = None,
+        save_as: Optional[Path] = None,
+    ) -> Path:
+        """WAV 생성 및 저장
 
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        text_hash = _text_hash(text)
-        filename = f"{timestamp}_{text_hash}.wav"
-        output_path = output_dir / filename
+        Parameters
+        ----------
+        save_as : 저장할 고정 경로. 지정 시 output_dir/타임스탬프 대신 해당 경로에 덮어씁니다.
+        """
+        if save_as is not None:
+            output_path = Path(save_as)
+        else:
+            if output_dir is None:
+                output_dir = Path("tts_output")
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            text_hash = _text_hash(text)
+            output_path = output_dir / f"{timestamp}_{text_hash}.wav"
 
         audio_bytes = self.generate_wav(text)
         _atomic_write(output_path, audio_bytes)
@@ -156,15 +166,28 @@ class ElevenLabsTTSPlayer:
                 continue
         return None
 
-    def speak(self, text: str, save: bool = True, play: bool = True) -> Optional[Path]:
-        """WAV 생성, 저장, 재생"""
+    def speak(
+        self,
+        text: str,
+        save: bool = True,
+        play: bool = True,
+        save_as: Optional[Path] = None,
+    ) -> Optional[Path]:
+        """WAV 생성, 저장, 재생
+
+        Parameters
+        ----------
+        save_as : 저장할 고정 경로. 지정 시 매번 같은 파일에 덮어씁니다.
+        """
         if not text or not text.strip():
             return None
 
         try:
             # 1. 생성 및 저장
-            if self.output_dir and save:
-                output_path = self.generator.generate_and_save(text, self.output_dir)
+            if save:
+                output_path = self.generator.generate_and_save(
+                    text, self.output_dir, save_as=save_as
+                )
             else:
                 audio_bytes = self.generator.generate_wav(text)
                 output_path = None
