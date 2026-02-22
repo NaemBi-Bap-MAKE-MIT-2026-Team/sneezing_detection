@@ -29,8 +29,8 @@ from pathlib import Path
 
 import numpy as np
 
-# .env 파일 자동 로드 (python-dotenv 설치 시)
-# src/.env 에 GEMINI_API_KEY, ELEVENLABS_API_KEY 를 작성하세요.
+# Auto-load .env file if python-dotenv is installed.
+# Place GEMINI_API_KEY and ELEVENLABS_API_KEY in src/.env.
 try:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).parent / ".env")
@@ -42,12 +42,12 @@ from ml_model import config as cfg
 from communication import MicrophoneStream, NetworkMicStream
 from output_feature import LCD, GifAnimator
 
-# LLM + TTS 연동 (API 키 없이도 기존 WAV 재생으로 폴백)
+# LLM + TTS integration (falls back to static WAV playback if API keys are missing)
 try:
     from connection import BlessYouFlow
     _BLESS_FLOW_AVAILABLE = True
 except (ImportError, Exception) as _e:
-    print(f"[WARN] BlessYouFlow 불러오기 실패 ({_e}) — 기존 WAV 재생 모드로 동작합니다.")
+    print(f"[WARN] BlessYouFlow import failed ({_e}) — falling back to static WAV playback.")
     _BLESS_FLOW_AVAILABLE = False
 
 # ---------------------------------------------------------------------- #
@@ -236,12 +236,19 @@ def main() -> None:
         "--lang",
         default="en",
         choices=["en", "ko"],
-        help="Gemini 멘트 생성 언어 (en 또는 ko, 기본값: en)",
+        help="Language for Gemini health comment generation (en or ko, default: en)",
     )
     ap.add_argument(
         "--no-llm",
         action="store_true",
-        help="LLM/TTS 기능을 비활성화하고 기존 WAV 재생만 사용",
+        help="Disable LLM/TTS and fall back to static WAV playback",
+    )
+    ap.add_argument(
+        "--message-num",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Number of TTS messages to pre-generate at startup (default: 10)",
     )
     args = ap.parse_args()
 
@@ -251,7 +258,7 @@ def main() -> None:
     require(GIF_PATH,   "Bless you GIF")
     require(BLESS_WAV,  "Bless you WAV")
 
-    # LLM + TTS 흐름 초기화
+    # Initialize LLM + TTS flow
     bless_flow = None
     use_llm = _BLESS_FLOW_AVAILABLE and not args.no_llm
     if use_llm:
@@ -259,12 +266,13 @@ def main() -> None:
             bless_flow = BlessYouFlow(
                 bless_wav_path=BLESS_WAV,
                 language=args.lang,
+                num_messages=args.message_num,
             )
-            print(f"✓ BlessYouFlow 활성화 (language={args.lang})")
+            print(f"✓ BlessYouFlow enabled (language={args.lang})")
         except (ValueError, ImportError) as e:
-            print(f"[WARN] BlessYouFlow 초기화 실패: {e}")
-            print("       → GEMINI_API_KEY / ELEVENLABS_API_KEY 환경 변수를 확인하세요.")
-            print("       → 기존 WAV 재생 모드로 동작합니다.")
+            print(f"[WARN] BlessYouFlow initialization failed: {e}")
+            print("       → Check GEMINI_API_KEY / ELEVENLABS_API_KEY environment variables.")
+            print("       → Falling back to static WAV playback.")
             bless_flow = None
 
     # model + stats
@@ -315,21 +323,28 @@ def main() -> None:
         if animator:
             animator.trigger()
         if bless_flow is not None:
-            # 사전 생성된 ElevenLabs TTS WAV 재생 + 다음 WAV 백그라운드 생성
+            # Play pre-generated ElevenLabs TTS WAV and start generating the next one in the background
             bless_flow.run_async()
         else:
-            # 폴백: 기존 WAV 재생
+            # Fallback: play static WAV
             play_bless_wav_async(BLESS_WAV)
 
-    # Detection 루프 시작 전 — BlessYouFlow blocking prefetch
+    # Blocking prefetch before the detection loop starts
     if bless_flow is not None:
-        print("[main] BlessYouFlow 사전 준비 시작 (Detection 이전에 완료됩니다)...")
-        ok = bless_flow.initialize()
+        print("[main] Starting BlessYouFlow prefetch (will complete before detection loop)...")
+        print("[main]   (Press Ctrl+C to skip and use static WAV fallback)")
+        try:
+            ok = bless_flow.initialize()
+        except KeyboardInterrupt:
+            print("\n[main] ⚠ BlessYouFlow initialization interrupted — falling back to static WAV.")
+            bless_flow = None
+            ok = False
         if not ok:
-            print("[main] ❌ BlessYouFlow 초기화 실패 — 프로그램을 종료합니다.")
-            print("       Gemini / ElevenLabs API 키 및 사용량을 확인하세요.")
-            raise SystemExit(1)
-        print("[main] ✓ Detection 시작")
+            print("[main] ⚠ BlessYouFlow initialization failed — falling back to static WAV.")
+            print("       Check your Gemini / ElevenLabs API keys and usage limits.")
+            bless_flow = None
+        else:
+            print("[main] ✓ Detection ready")
 
     print("STREAM START (Ctrl+C to stop)")
     print(f"mode: hybrid burst, burst={BURST_SECONDS}s, hop={HOP_SEC}s")

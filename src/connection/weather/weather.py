@@ -1,25 +1,25 @@
 """
 connection/weather/weather.py
 ------------------------------
-날씨 및 대기질 데이터를 조회합니다.
+Fetches weather and air quality data.
 
-- Open-Meteo  : 기온, 습도, 풍속, PM10, PM2.5, US AQI (무료, API 키 불필요)
-- wttr.in     : 날씨 상태 설명 및 어제 대비 기온 변화 (무료, API 키 불필요)
+- Open-Meteo  : temperature, humidity, wind speed, PM10, PM2.5, US AQI (free, no API key)
+- wttr.in     : weather condition description and temperature change vs yesterday (free, no API key)
 
 Usage
 -----
 fetcher = WeatherFetcher()
 
-# 기본 (Open-Meteo만)
+# Basic (Open-Meteo only)
 data = fetcher.get_context(lat=37.56, lon=126.97)
 
-# wttr.in 포함 (더 풍부한 날씨 설명 + 어제 대비 기온 변화)
+# With wttr.in (richer weather description + temperature change vs yesterday)
 data = fetcher.get_context(lat=37.56, lon=126.97, city="Seoul")
 # {
 #   "temperature": 5.0, "humidity": 70, "weather_label": "Partly cloudy",
 #   "wind_speed": 3.2, "pm2_5": 35.0, "pm10": 45.0,
 #   "us_aqi": 35, "aqi_label": "Good",
-#   "temp_change_yesterday": "+2.5°C"   # city 제공 시 추가
+#   "temp_change_yesterday": "+2.5°C"   # included when city is provided
 # }
 """
 
@@ -40,7 +40,7 @@ except ImportError:
     from ml_model import config as cfg
 
 
-# WMO 날씨 코드 → 설명 매핑 (주요 코드 포함)
+# WMO weather code → description mapping (major codes included)
 _WMO_CODE_LABELS: dict[int, str] = {
     0: "Clear sky",
     1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
@@ -57,7 +57,7 @@ _WMO_CODE_LABELS: dict[int, str] = {
     96: "Thunderstorm with hail", 99: "Heavy thunderstorm with hail",
 }
 
-# US AQI 구간 → 등급 레이블
+# US AQI range → grade label
 _AQI_LABELS: list[tuple[float, str]] = [
     (50,   "Good"),
     (100,  "Moderate"),
@@ -69,17 +69,17 @@ _AQI_LABELS: list[tuple[float, str]] = [
 
 
 class WeatherFetcher:
-    """Open-Meteo API로 날씨 및 대기질 정보를 조회하는 클래스.
+    """Fetches weather and air quality information from the Open-Meteo API.
 
     Parameters
     ----------
-    timeout : HTTP 요청 타임아웃(초). 기본값은 config.CONTEXT_FETCH_TIMEOUT.
+    timeout : HTTP request timeout (seconds). Defaults to config.CONTEXT_FETCH_TIMEOUT.
     """
 
     def __init__(self, timeout: int = cfg.CONTEXT_FETCH_TIMEOUT):
         self.timeout = timeout
         if not _REQUESTS_AVAILABLE:
-            print("[WeatherFetcher] ⚠ requests 패키지 없음. pip install requests 를 실행하세요.")
+            print("[WeatherFetcher] ⚠ requests package not found. Run: pip install requests")
 
     def get_context(
         self,
@@ -87,30 +87,30 @@ class WeatherFetcher:
         lon: float,
         city: Optional[str] = None,
     ) -> Optional[dict]:
-        """위도/경도로 날씨 + 대기질 정보를 조회합니다.
+        """Fetch weather + air quality data by latitude/longitude.
 
         Parameters
         ----------
-        lat  : 위도
-        lon  : 경도
-        city : 도시 이름 (선택). 제공 시 wttr.in으로 날씨 상태 설명과
-               어제 대비 기온 변화를 추가로 조회합니다.
+        lat  : Latitude.
+        lon  : Longitude.
+        city : City name (optional). When provided, augments the result with a
+               weather condition description and temperature change vs yesterday from wttr.in.
 
         Returns
         -------
         dict | None
-            성공 시: {
-                "temperature": float,           # 섭씨 온도
-                "humidity": int,                # 상대습도 (%)
-                "weather_label": str,           # 날씨 설명
-                "wind_speed": float,            # 풍속 (km/h)
+            On success: {
+                "temperature": float,           # Temperature in Celsius
+                "humidity": int,                # Relative humidity (%)
+                "weather_label": str,           # Weather condition description
+                "wind_speed": float,            # Wind speed (km/h)
                 "pm2_5": float,                 # PM2.5 (µg/m³)
                 "pm10": float,                  # PM10 (µg/m³)
-                "us_aqi": int,                  # US AQI 지수
-                "aqi_label": str,               # AQI 등급 레이블
-                "temp_change_yesterday": str,   # 어제 대비 기온 변화 (city 제공 시)
+                "us_aqi": int,                  # US AQI index
+                "aqi_label": str,               # AQI grade label
+                "temp_change_yesterday": str,   # Temp change vs yesterday (when city provided)
             }
-            실패 시: None
+            On failure: None
         """
         if not _REQUESTS_AVAILABLE:
             return None
@@ -146,7 +146,7 @@ class WeatherFetcher:
             result["us_aqi"] = None
             result["aqi_label"] = "Unknown"
 
-        # wttr.in 보강: 더 풍부한 날씨 설명 + 어제 대비 기온 변화
+        # Augment with wttr.in: richer weather description + temperature change vs yesterday
         if city:
             wttr = self._fetch_wttr(city)
             if wttr:
@@ -156,16 +156,16 @@ class WeatherFetcher:
         return result
 
     def _fetch_wttr(self, city: str) -> Optional[dict]:
-        """wttr.in으로 날씨 상태 설명과 어제 대비 기온 변화를 조회합니다.
+        """Fetch weather condition description and temperature change vs yesterday from wttr.in.
 
         Parameters
         ----------
-        city : 도시 이름 (예: "Seoul", "Boston")
+        city : City name (e.g., "Seoul", "Boston").
 
         Returns
         -------
         dict | None
-            {"condition": str, "temp_change": str} 또는 None
+            {"condition": str, "temp_change": str} or None.
         """
         url = f"https://wttr.in/{city}?format=j1"
         try:
@@ -181,57 +181,57 @@ class WeatherFetcher:
 
             return {"condition": condition, "temp_change": temp_change}
         except Exception as e:
-            print(f"[WeatherFetcher] ⚠ wttr.in 오류: {e}")
+            print(f"[WeatherFetcher] ⚠ wttr.in error: {e}")
             return None
 
     def _fetch_weather(self, lat: float, lon: float) -> Optional[dict]:
-        """Open-Meteo 날씨 API를 호출합니다."""
+        """Call the Open-Meteo weather API."""
         url = cfg.WEATHER_API_URL.format(lat=lat, lon=lon)
         try:
             response = requests.get(url, timeout=self.timeout)
             response.raise_for_status()
             return response.json().get("current", {})
         except Exception as e:
-            print(f"[WeatherFetcher] ❌ 날씨 API 오류: {e}")
+            print(f"[WeatherFetcher] ❌ Weather API error: {e}")
             return None
 
     def _fetch_air_quality(self, lat: float, lon: float) -> Optional[dict]:
-        """Open-Meteo 대기질 API를 호출합니다."""
+        """Call the Open-Meteo air quality API."""
         url = cfg.AIR_QUALITY_API_URL.format(lat=lat, lon=lon)
         try:
             response = requests.get(url, timeout=self.timeout)
             response.raise_for_status()
             return response.json().get("current", {})
         except Exception as e:
-            print(f"[WeatherFetcher] ❌ 대기질 API 오류: {e}")
+            print(f"[WeatherFetcher] ❌ Air quality API error: {e}")
             return None
 
     def _aqi_label(self, aqi: int) -> str:
-        """US AQI 수치를 등급 문자열로 변환합니다."""
+        """Convert a US AQI value to a grade string."""
         for threshold, label in _AQI_LABELS:
             if aqi <= threshold:
                 return label
         return "Hazardous"
 
     def _weather_label(self, wmo_code: int) -> str:
-        """WMO 날씨 코드를 사람이 읽을 수 있는 문자열로 변환합니다."""
+        """Convert a WMO weather code to a human-readable string."""
         return _WMO_CODE_LABELS.get(wmo_code, "Unknown conditions")
 
 
 if __name__ == "__main__":
-    # 서울 좌표로 셀프 테스트
+    # Self-test with Seoul coordinates
     fetcher = WeatherFetcher()
     data = fetcher.get_context(lat=37.56, lon=126.97, city="Seoul")
     if data:
         print(
             f"[WeatherFetcher] ✓ "
             f"{data['temperature']}°C, "
-            f"습도 {data['humidity']}%, "
+            f"humidity {data['humidity']}%, "
             f"{data['weather_label']}, "
             f"AQI {data['us_aqi']} ({data['aqi_label']}), "
             f"PM2.5 {data['pm2_5']} µg/m³"
         )
         if "temp_change_yesterday" in data:
-            print(f"[WeatherFetcher] 어제 대비 기온 변화: {data['temp_change_yesterday']}")
+            print(f"[WeatherFetcher] Temperature change vs yesterday: {data['temp_change_yesterday']}")
     else:
-        print("[WeatherFetcher] ❌ 데이터 조회 실패")
+        print("[WeatherFetcher] ❌ Data fetch failed")

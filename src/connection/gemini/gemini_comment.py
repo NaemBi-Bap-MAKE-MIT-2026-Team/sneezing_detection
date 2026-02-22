@@ -1,24 +1,26 @@
 """
 connection/gemini/gemini_comment.py
 -----------------------------------------
-Google Gemini API를 사용하여 재채기 감지 후 건강 멘트를 생성합니다.
+Generates health comments after sneeze detection using the Google Gemini API.
 
-한 번의 API 호출로 여러 개의 메시지를 배치 생성하고, 환경 데이터
-(위치/날씨/대기질)를 반영한 맞춤형 멘트를 제공합니다.
+Batch-generates multiple messages in a single API call and supports optional
+environmental data (location/weather/air quality) for contextual comments.
 
 Usage
 -----
 gen = GeminiCommentGenerator(api_key="YOUR_KEY")
-msgs = gen.generate_batch(num_messages=30)         # 30개 메시지 리스트
-msgs = gen.generate_batch(num_messages=30, "ko")   # 한국어
-comment = gen.generate()                           # 단일 메시지 (내부적으로 배치 1개)
+msgs = gen.generate_batch(num_messages=30)         # list of 30 messages
+msgs = gen.generate_batch(num_messages=30, "ko")   # Korean
+comment = gen.generate()                           # single message (internally batch of 1)
 
 Environment
 -----------
-GEMINI_API_KEY 환경 변수로 API 키를 설정할 수 있습니다.
+API key can be set via the GEMINI_API_KEY environment variable.
 """
 
+import json
 import os
+import re
 from typing import Optional
 
 try:
@@ -30,46 +32,48 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# 기본 배치 프롬프트 (위치/날씨 컨텍스트 없음)
+# Default batch prompt (no location/weather context)
 # ---------------------------------------------------------------------------
 _BATCH_PROMPTS = {
     "en": (
         "Role: You are a warm, witty, and caring health companion.\n\n"
-        "Task: Generate a list of {num_messages} distinct, short, comforting messages "
+        "Task: Generate exactly {num_messages} distinct, short, comforting messages "
         "for someone who has just sneezed. Each message should be 1-2 sentences long.\n\n"
         "Instructions:\n"
         "1. Tone: Friendly, casual, and supportive — like a kind senior or a close friend.\n"
         "2. Include a simple, warm piece of health advice (e.g., drinking warm water, staying warm, resting).\n"
         "3. Length: Keep each message concise (1-2 sentences).\n"
-        "4. Output Format: List each message on a new line, prefixed with a hyphen and a space "
-        "(e.g., - Message 1). Ensure there are exactly {num_messages} messages.\n\n"
-        "Output Examples:\n"
-        "- Stay hydrated with some warm tea — it will help soothe your throat!\n"
-        "- Take care of yourself and stay warm today!"
+        "4. Output Format: Respond with ONLY a JSON array of exactly {num_messages} strings. "
+        "No explanation, no markdown, no extra text — just the raw JSON array.\n\n"
+        'Example output for 3 messages:\n'
+        '["Stay hydrated with some warm tea!", '
+        '"Take care of yourself and stay warm today.", '
+        '"Drink a glass of warm water to soothe your throat!"]'
     ),
     "ko": (
         "역할: 당신은 따뜻하고 재치 있는 건강 동반자입니다.\n\n"
-        "과제: 방금 재채기를 한 사람을 위해 {num_messages}개의 짧고 위로가 되는 "
+        "과제: 방금 재채기를 한 사람을 위해 정확히 {num_messages}개의 짧고 위로가 되는 "
         "멘트를 생성해 주세요. 각 멘트는 1~2문장으로 작성해 주세요.\n\n"
         "지침:\n"
         "1. 어조: 친근하고 편안하며 따뜻하게 — 친한 선배나 가까운 친구처럼.\n"
         "2. 따뜻한 건강 조언을 포함해 주세요 (예: 따뜻한 물 마시기, 따뜻하게 입기, 휴식 등).\n"
         "3. 길이: 각 멘트는 간결하게 (1~2문장).\n"
-        "4. 출력 형식: 각 멘트를 새 줄에 하이픈과 공백으로 시작하여 작성 "
-        "(예: - 멘트 1). 정확히 {num_messages}개의 멘트를 작성해 주세요.\n\n"
-        "출력 예시:\n"
-        "- 따뜻한 차 한 잔 마시면 목이 좀 나아질 거예요!\n"
-        "- 오늘 따뜻하게 입고 건강 잘 챙기세요!"
+        "4. 출력 형식: 정확히 {num_messages}개의 문자열을 담은 JSON 배열만 응답하세요. "
+        "설명, 마크다운, 추가 텍스트 없이 순수 JSON 배열만 출력하세요.\n\n"
+        "3개 예시 출력:\n"
+        '["따뜻한 차 한 잔 마시면 목이 좀 나아질 거예요!", '
+        '"오늘 따뜻하게 입고 건강 잘 챙기세요.", '
+        '"따뜻한 물 한 잔으로 목을 달래보세요!"]'
     ),
 }
 
 # ---------------------------------------------------------------------------
-# 환경 컨텍스트 포함 배치 프롬프트 (GPS + 날씨/대기질)
+# Context-enriched batch prompt (GPS + weather/air quality)
 # ---------------------------------------------------------------------------
 _BATCH_CONTEXT_PROMPTS = {
     "en": (
         "Role: You are a warm, witty, and caring health companion.\n\n"
-        "Task: Generate a list of {num_messages} distinct, short, comforting messages "
+        "Task: Generate exactly {num_messages} distinct, short, comforting messages "
         "for someone in {city}, {country} who has just sneezed, "
         "considering the provided environmental factors. "
         "Each message should be 1-2 sentences long and focus on the most relevant environmental factor.\n\n"
@@ -89,17 +93,17 @@ _BATCH_CONTEXT_PROMPTS = {
         "    - Provide a simple, warm piece of advice directly related to the identified cause.\n"
         "3. Length: Keep each message concise (1-2 sentences).\n"
         "4. Focus on the single most relevant environmental factor per message.\n"
-        "5. Output Format: List each message on a new line, prefixed with a hyphen and a space "
-        "(e.g., - Message 1). Ensure there are exactly {num_messages} messages.\n\n"
-        "Output Examples:\n"
-        "- The PM2.5 levels are quite high today — try wearing a mask when going outside.\n"
-        "- With the air quality this poor, a warm cup of water will help soothe your throat.\n"
-        "- The temperature dropped suddenly, so keep yourself warm and cozy!"
+        "5. Output Format: Respond with ONLY a JSON array of exactly {num_messages} strings. "
+        "No explanation, no markdown, no extra text — just the raw JSON array.\n\n"
+        'Example output for 3 messages:\n'
+        '["The PM2.5 levels are quite high today — try wearing a mask when going outside.", '
+        '"With the air quality this poor, a warm cup of water will help soothe your throat.", '
+        '"The temperature dropped suddenly, so keep yourself warm and cozy!"]'
     ),
     "ko": (
         "역할: 당신은 따뜻하고 재치 있는 건강 동반자입니다.\n\n"
         "과제: {country} {city}에서 방금 재채기를 한 사람을 위해 "
-        "{num_messages}개의 짧고 위로가 되는 멘트를 생성해 주세요. "
+        "정확히 {num_messages}개의 짧고 위로가 되는 멘트를 생성해 주세요. "
         "제공된 환경 요인을 고려하여, 가장 관련성 높은 요인에 집중해 주세요. "
         "각 멘트는 1~2문장으로 작성해 주세요.\n\n"
         "오늘의 환경 요인:\n"
@@ -118,12 +122,12 @@ _BATCH_CONTEXT_PROMPTS = {
         "    - 파악된 원인과 직접 관련된 따뜻한 건강 조언을 제공하세요.\n"
         "3. 길이: 각 멘트는 간결하게 (1~2문장).\n"
         "4. 멘트마다 가장 관련성 높은 환경 요인 하나에 집중하세요.\n"
-        "5. 출력 형식: 각 멘트를 새 줄에 하이픈과 공백으로 시작하여 작성 "
-        "(예: - 멘트 1). 정확히 {num_messages}개의 멘트를 작성해 주세요.\n\n"
-        "출력 예시:\n"
-        "- 오늘 초미세먼지가 매우 나쁘네요 — 외출 시 마스크를 꼭 착용하세요.\n"
-        "- 대기질이 좋지 않으니 따뜻한 물 한 잔으로 목을 달래보세요.\n"
-        "- 기온이 갑자기 내려갔으니 따뜻하게 입고 건강 챙기세요!"
+        "5. 출력 형식: 정확히 {num_messages}개의 문자열을 담은 JSON 배열만 응답하세요. "
+        "설명, 마크다운, 추가 텍스트 없이 순수 JSON 배열만 출력하세요.\n\n"
+        "3개 예시 출력:\n"
+        '["오늘 초미세먼지가 매우 나쁘네요 — 외출 시 마스크를 꼭 착용하세요.", '
+        '"대기질이 좋지 않으니 따뜻한 물 한 잔으로 목을 달래보세요.", '
+        '"기온이 갑자기 내려갔으니 따뜻하게 입고 건강 챙기세요!"]'
     ),
 }
 
@@ -134,14 +138,14 @@ _DEFAULT_FALLBACKS = {
 
 
 class GeminiCommentGenerator:
-    """Gemini API를 사용해 재채기 후 건강 멘트를 배치 생성하는 클래스.
+    """Batch-generates post-sneeze health comments using the Gemini API.
 
     Parameters
     ----------
-    api_key          : Gemini API 키. None이면 환경 변수 GEMINI_API_KEY 사용.
-    model_name       : 사용할 Gemini 모델 ID.
-    temperature      : 생성 창의성 (0.0 결정론적 ~ 1.0 창의적). 기본값 0.9.
-    max_output_tokens: 최대 출력 토큰 수. 배치 생성 시 충분히 크게 설정.
+    api_key          : Gemini API key. Uses GEMINI_API_KEY env var if None.
+    model_name       : Gemini model ID to use.
+    temperature      : Generation creativity (0.0 deterministic ~ 1.0 creative). Default 0.9.
+    max_output_tokens: Max output tokens. Set large enough for batch generation.
     """
 
     def __init__(
@@ -149,7 +153,7 @@ class GeminiCommentGenerator:
         api_key: Optional[str] = None,
         model_name: str = "gemini-2.5-flash",
         temperature: float = 0.9,
-        max_output_tokens: int = 2048,
+        max_output_tokens: int = 8192,
     ):
         if not _GENAI_AVAILABLE:
             raise ImportError(
@@ -170,6 +174,7 @@ class GeminiCommentGenerator:
         self._gen_config = genai_types.GenerateContentConfig(
             temperature=temperature,
             max_output_tokens=max_output_tokens,
+            response_mime_type="application/json",
         )
 
     def generate_batch(
@@ -178,28 +183,28 @@ class GeminiCommentGenerator:
         language: str = "en",
         context: Optional[dict] = None,
     ) -> list[str]:
-        """재채기 후 건강 멘트를 여러 개 배치 생성합니다.
+        """Batch-generate post-sneeze health comments.
 
         Parameters
         ----------
-        num_messages : 생성할 메시지 개수.
-        language     : 출력 언어 코드. "en" (영어) 또는 "ko" (한국어).
-        context      : GPS/날씨/대기질 정보 딕셔너리 (선택). None이면 기본 프롬프트 사용.
-                       필요 키: city, country, temperature, humidity, weather_label,
-                                wind_speed, aqi_label, pm2_5, pm10
+        num_messages : Number of messages to generate.
+        language     : Output language code. "en" (English) or "ko" (Korean).
+        context      : GPS/weather/air quality dict (optional). Uses default prompt if None.
+                       Required keys: city, country, temperature, humidity, weather_label,
+                                      wind_speed, aqi_label, pm2_5, pm10
 
         Returns
         -------
         list[str]
-            생성된 건강 멘트 텍스트 리스트.
-            API 호출 실패 시 빈 리스트를 반환합니다.
+            List of generated health comment strings.
+            Returns an empty list on API call failure.
         """
         if context:
             try:
                 template = _BATCH_CONTEXT_PROMPTS.get(language, _BATCH_CONTEXT_PROMPTS["en"])
                 prompt = template.format(num_messages=num_messages, **context)
             except KeyError as e:
-                print(f"[GeminiComment] ⚠ 컨텍스트 키 누락({e}) — 기본 프롬프트 사용")
+                print(f"[GeminiComment] ⚠ Missing context key ({e}) — using default prompt")
                 template = _BATCH_PROMPTS.get(language, _BATCH_PROMPTS["en"])
                 prompt = template.format(num_messages=num_messages)
         else:
@@ -207,7 +212,7 @@ class GeminiCommentGenerator:
             prompt = template.format(num_messages=num_messages)
 
         try:
-            print(f"[GeminiComment] Gemini API 호출 중 ({num_messages}개 메시지 생성)...")
+            print(f"[GeminiComment] Calling Gemini API (generating {num_messages} messages)...")
             response = self._client.models.generate_content(
                 model=self._model_name,
                 contents=prompt,
@@ -215,82 +220,111 @@ class GeminiCommentGenerator:
             )
             raw_text = response.text.strip()
             messages = self._parse_messages(raw_text, num_messages)
-            print(f"[GeminiComment] ✓ {len(messages)}개 메시지 생성 완료")
+            print(f"[GeminiComment] ✓ {len(messages)} messages generated")
             return messages
         except Exception as e:
-            print(f"[GeminiComment] ❌ 배치 생성 오류: {e}")
+            print(f"[GeminiComment] ❌ Batch generation error: {e}")
             return []
 
     def _parse_messages(self, raw_text: str, expected_count: int) -> list[str]:
-        """Gemini 응답에서 메시지를 유연하게 파싱합니다.
+        """Parse messages from a Gemini JSON response.
 
-        여러 형식을 지원합니다:
-        - "- message" (하이픈)
-        - "* message" (별표)
-        - "• message" (점)
-        - "1. message" (숫자+점)
-        - "1) message" (숫자+괄호)
-        - "message" (형식 없음)
+        Primary path : JSON array of strings (matches response_mime_type="application/json").
+        Fallback path: regex-based parsing for markdown/list-formatted responses.
 
         Parameters
         ----------
-        raw_text : Gemini API 응답 텍스트
-        expected_count : 기대하는 메시지 개수 (형식 검증용)
+        raw_text : Raw Gemini API response text.
+        expected_count : Expected number of messages (used for validation).
 
         Returns
         -------
         list[str]
-            파싱된 메시지 리스트
+            List of parsed message strings.
         """
-        messages = []
+        # --- Primary: JSON array parsing ---
+        try:
+            # Strip markdown code fences if the model wraps the JSON
+            clean = re.sub(r"```(?:json)?\s*|\s*```", "", raw_text).strip()
+            data = json.loads(clean)
 
+            # Unwrap dict: some models return {"messages": [...]} instead of [...]
+            if isinstance(data, dict):
+                for key in ("messages", "items", "responses", "comments", "list"):
+                    if key in data and isinstance(data[key], list):
+                        data = data[key]
+                        break
+                else:
+                    # Last resort: use first list value in the dict
+                    for v in data.values():
+                        if isinstance(v, list):
+                            data = v
+                            break
+
+            if isinstance(data, list):
+                messages = [str(m).strip() for m in data if str(m).strip()]
+                if messages:
+                    if len(messages) > expected_count:
+                        messages = messages[:expected_count]
+                    return messages
+        except json.JSONDecodeError as e:
+            print(f"[GeminiComment] ⚠ JSON decode error at pos {e.pos}: {e.msg} — raw response: {raw_text[:300]!r}")
+        except ValueError:
+            pass
+
+        # --- Fallback: regex-based parsing ---
+        print("[GeminiComment] ⚠ Falling back to regex parser")
+        raw_text = re.sub(r"```[\w]*\n?", "", raw_text)
+
+        _SKIP_PATTERN = re.compile(
+            r"^(here are|below are|the following|these are|sure[,!]|of course|certainly|"
+            r"i[''`]?ve generated|i[''`]?ve created|as requested|check out|enjoy)",
+            re.IGNORECASE,
+        )
+
+        messages = []
         for line in raw_text.split("\n"):
             line = line.strip()
             if not line:
                 continue
 
-            # 불릿 포인트 형식: "- msg", "* msg", "• msg"
-            if line.startswith(("- ", "* ", "• ")):
-                msg = line[2:].strip()
+            line_clean = re.sub(r"^(\*{1,2}|_{1,2})", "", line).strip()
+            line_clean = re.sub(r"(\*{1,2}|_{1,2})$", "", line_clean).strip()
+
+            if _SKIP_PATTERN.match(line_clean):
+                continue
+
+            m = re.match(r"^\d+[.)]\s+(.*)", line_clean)
+            if m:
+                msg = re.sub(r"^(\*{1,2}|_{1,2})|(\*{1,2}|_{1,2})$", "", m.group(1)).strip()
                 if msg:
                     messages.append(msg)
-            # 숫자 형식: "1. msg" 또는 "1) msg"
-            elif line and line[0].isdigit():
-                if ". " in line:
-                    msg = line.split(". ", 1)[-1].strip()
-                    if msg:
-                        messages.append(msg)
-                elif ") " in line:
-                    msg = line.split(") ", 1)[-1].strip()
-                    if msg:
-                        messages.append(msg)
-            # 구분자 없는 메시지 (마지막 수단)
-            elif line and not any(
-                line.startswith(prefix)
-                for prefix in ("AI:", "Assis", "System", "User:", "[", "]")
-            ):
-                # 메타 정보처럼 보이지 않으면 메시지로 간주
-                messages.append(line)
+                continue
 
-        # 요청 개수보다 많으면 자르기
+            m = re.match(r"^[-*•]\s+(.*)", line_clean)
+            if m:
+                msg = re.sub(r"^(\*{1,2}|_{1,2})|(\*{1,2}|_{1,2})$", "", m.group(1)).strip()
+                if msg:
+                    messages.append(msg)
+
         if len(messages) > expected_count:
             messages = messages[:expected_count]
 
         return messages
 
     def generate(self, language: str = "en", context: Optional[dict] = None) -> str:
-        """재채기 후 건강 멘트를 단일 메시지로 생성합니다.
+        """Generate a single post-sneeze health comment.
 
         Parameters
         ----------
-        language : 출력 언어 코드. "en" (영어) 또는 "ko" (한국어).
-        context  : GPS/날씨/대기질 정보 딕셔너리 (선택).
+        language : Output language code. "en" (English) or "ko" (Korean).
+        context  : GPS/weather/air quality dict (optional).
 
         Returns
         -------
         str
-            생성된 건강 멘트 텍스트.
-            API 호출 실패 시 기본 fallback 문구를 반환합니다.
+            Generated health comment text.
+            Returns a hardcoded fallback string on API call failure.
         """
         messages = self.generate_batch(num_messages=1, language=language, context=context)
         if messages:
@@ -299,19 +333,19 @@ class GeminiCommentGenerator:
 
 
 if __name__ == "__main__":
-    # 단독 실행 테스트
+    # Standalone test
     import sys
 
     lang = sys.argv[1] if len(sys.argv) > 1 else "en"
     num = int(sys.argv[2]) if len(sys.argv) > 2 else 5
-    print(f"[GeminiComment] 테스트 (language={lang}, num_messages={num})")
+    print(f"[GeminiComment] Test run (language={lang}, num_messages={num})")
 
     try:
         gen = GeminiCommentGenerator()
         messages = gen.generate_batch(num_messages=num, language=lang)
-        print(f"\n생성된 메시지 ({len(messages)}개):")
+        print(f"\nGenerated messages ({len(messages)}):")
         for i, msg in enumerate(messages, 1):
             print(f"{i}. {msg}")
     except ValueError as e:
-        print(f"[오류] {e}")
-        print("환경 변수 GEMINI_API_KEY 를 설정하고 다시 실행하세요.")
+        print(f"[ERROR] {e}")
+        print("Set GEMINI_API_KEY environment variable and try again.")

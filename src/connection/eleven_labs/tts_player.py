@@ -1,21 +1,21 @@
 """
-connection/elven_labs/tts_player.py
+connection/eleven_labs/tts_player.py
 -------------------------------------
-ElevenLabs REST API를 사용한 WAV 생성 및 저장 (통합 버전)
+WAV generation and storage using the ElevenLabs REST API (unified version).
 
-파이프라인:
-1. GPS: 위치 조회
-2. Weather: 날씨 정보 조회
-3. Gemini: 건강 멘트 생성
-4. ElevenLabs TTS: 음성 생성 및 WAV 저장
+Pipeline context:
+1. GPS: location lookup
+2. Weather: weather data fetch
+3. Gemini: health comment generation
+4. ElevenLabs TTS: speech synthesis and WAV save
 
 Usage
 -----
-# 생성 및 저장만
+# Generate and save only
 generator = ElevenLabsTTSGenerator()
 wav_path = generator.generate_and_save("Stay warm!", "./sounds")
 
-# 생성, 저장, 재생
+# Generate, save, and play
 player = ElevenLabsTTSPlayer(output_dir="./sounds")
 player.speak("Stay warm and healthy!")
 """
@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Optional
 
 
-# ===== ElevenLabs REST API 설정 =====
+# ===== ElevenLabs REST API Settings =====
 ELEVEN_BASE_URL = "https://api.elevenlabs.io"
 ELEVEN_VOICE_ID = "hpp4J3VqNfWAUOO0d1Us"
 DEFAULT_MODEL_ID = "eleven_multilingual_v2"
@@ -48,12 +48,12 @@ MAX_CHARS_PER_PROMPT = 800
 
 
 def _text_hash(text: str) -> str:
-    """텍스트의 짧은 해시값 반환"""
+    """Return a short SHA-256 hash of the given text."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
-    """원자적 파일 쓰기"""
+    """Write bytes to path atomically via a temporary file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with open(tmp_path, "wb") as f:
@@ -64,7 +64,7 @@ def _atomic_write(path: Path, data: bytes) -> None:
 
 
 class ElevenLabsTTSGenerator:
-    """ElevenLabs REST API를 사용한 WAV 생성"""
+    """WAV generation via the ElevenLabs REST API."""
 
     def __init__(self, api_key: Optional[str] = None, voice_id: str = ELEVEN_VOICE_ID):
         self.api_key = api_key or os.environ.get("ELEVENLABS_API_KEY", "")
@@ -77,10 +77,10 @@ class ElevenLabsTTSGenerator:
         self.base_url = ELEVEN_BASE_URL
 
     def generate_wav(self, text: str, output_format: str = "wav_48000") -> bytes:
-        """WAV 오디오 생성"""
+        """Generate WAV audio from text."""
         if len(text) > MAX_CHARS_PER_PROMPT:
             text = text[:MAX_CHARS_PER_PROMPT].rstrip()
-            print(f"[TTSGenerator] ⚠ 텍스트 길이 제한 적용")
+            print(f"[TTSGenerator] ⚠ Text truncated to {MAX_CHARS_PER_PROMPT} characters")
 
         url = f"{self.base_url}/v1/text-to-speech/{self.voice_id}"
         headers = {
@@ -98,11 +98,11 @@ class ElevenLabsTTSGenerator:
             print(f"[TTSGenerator] 🎤 API 호출 중... ({len(text)} chars)")
             response = requests.post(url, headers=headers, json=payload, timeout=60)
             response.raise_for_status()
-            print(f"[TTSGenerator] ✓ WAV 생성됨 ({len(response.content)} bytes)")
+            print(f"[TTSGenerator] ✓ WAV generated ({len(response.content)} bytes)")
             return response.content
         except Exception as e:
             if output_format == "wav_48000":
-                print(f"[TTSGenerator] ⚠ 48kHz 실패 — 44.1kHz로 재시도")
+                print(f"[TTSGenerator] ⚠ 48kHz failed — retrying at 44.1kHz")
                 return self.generate_wav(text, "wav_44100")
             raise
 
@@ -112,11 +112,12 @@ class ElevenLabsTTSGenerator:
         output_dir: Optional[Path] = None,
         save_as: Optional[Path] = None,
     ) -> Path:
-        """WAV 생성 및 저장
+        """Generate WAV audio and save to disk.
 
         Parameters
         ----------
-        save_as : 저장할 고정 경로. 지정 시 output_dir/타임스탬프 대신 해당 경로에 덮어씁니다.
+        save_as : Fixed output path. If provided, overwrites this path instead of
+                  using a timestamped filename under output_dir.
         """
         if save_as is not None:
             output_path = Path(save_as)
@@ -132,12 +133,12 @@ class ElevenLabsTTSGenerator:
         audio_bytes = self.generate_wav(text)
         _atomic_write(output_path, audio_bytes)
 
-        print(f"[TTSGenerator] ✓ 저장됨: {output_path}")
+        print(f"[TTSGenerator] ✓ Saved: {output_path}")
         return output_path
 
 
 class ElevenLabsTTSPlayer:
-    """ElevenLabs TTS 생성, 저장, 재생"""
+    """ElevenLabs TTS generation, storage, and playback."""
 
     def __init__(self, api_key: Optional[str] = None, output_dir: Optional[Path] = None):
         self.generator = ElevenLabsTTSGenerator(api_key=api_key)
@@ -145,7 +146,7 @@ class ElevenLabsTTSPlayer:
         self._player_cmd = self._find_player()
 
     def _find_player(self) -> Optional[list]:
-        """오디오 플레이어 자동 감지"""
+        """Auto-detect an available audio player command."""
         player_commands = [
             ["aplay", "-q"],
             ["mpg123", "-q"],
@@ -160,7 +161,7 @@ class ElevenLabsTTSPlayer:
                     check=False,
                     timeout=2,
                 )
-                print(f"[TTSPlayer] ✓ 플레이어: {cmd[0]}")
+                print(f"[TTSPlayer] ✓ Player: {cmd[0]}")
                 return cmd
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 continue
@@ -173,17 +174,17 @@ class ElevenLabsTTSPlayer:
         play: bool = True,
         save_as: Optional[Path] = None,
     ) -> Optional[Path]:
-        """WAV 생성, 저장, 재생
+        """Generate, save, and play WAV audio.
 
         Parameters
         ----------
-        save_as : 저장할 고정 경로. 지정 시 매번 같은 파일에 덮어씁니다.
+        save_as : Fixed output path. If provided, overwrites the same file each time.
         """
         if not text or not text.strip():
             return None
 
         try:
-            # 1. 생성 및 저장
+            # 1. Generate and save
             if save:
                 output_path = self.generator.generate_and_save(
                     text, self.output_dir, save_as=save_as
@@ -192,7 +193,7 @@ class ElevenLabsTTSPlayer:
                 audio_bytes = self.generator.generate_wav(text)
                 output_path = None
 
-            # 2. 재생
+            # 2. Play
             if play and output_path and output_path.exists():
                 self._play_file(output_path)
 
@@ -202,9 +203,9 @@ class ElevenLabsTTSPlayer:
             return None
 
     def _play_file(self, path: Path) -> None:
-        """파일 재생"""
+        """Play the audio file at the given path."""
         if not self._player_cmd:
-            print(f"[TTSPlayer] ⚠ 플레이어 없음")
+            print(f"[TTSPlayer] ⚠ No audio player found")
             return
         try:
             subprocess.run(
@@ -214,9 +215,9 @@ class ElevenLabsTTSPlayer:
                 stderr=subprocess.DEVNULL,
                 timeout=30,
             )
-            print(f"[TTSPlayer] ✓ 재생됨")
+            print(f"[TTSPlayer] ✓ Played")
         except Exception as e:
-            print(f"[TTSPlayer] ⚠ 재생 실패: {e}")
+            print(f"[TTSPlayer] ⚠ Playback failed: {e}")
 
 
 if __name__ == "__main__":

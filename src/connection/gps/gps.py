@@ -1,10 +1,10 @@
 """
 connection/gps/gps.py
 ---------------------
-IP 기반 위치 조회 모듈.
+IP-based geolocation module.
 
-ip-api.com 의 무료 JSON 엔드포인트를 사용합니다 (API 키 불필요).
-네트워크 오류 또는 응답 실패 시 None을 반환하여 흐름을 중단하지 않습니다.
+Uses the free JSON endpoint of ip-api.com (no API key required).
+Returns None on network errors or response failures without interrupting the pipeline.
 
 Usage
 -----
@@ -24,7 +24,7 @@ try:
 except ImportError:
     _REQUESTS_AVAILABLE = False
 
-# config 경로 처리 (단독 실행 및 패키지 import 모두 지원)
+# Resolve config import for both standalone execution and package usage
 try:
     from ml_model import config as cfg
 except ImportError:
@@ -33,32 +33,32 @@ except ImportError:
 
 
 class GPSLocator:
-    """IP geolocation을 사용해 현재 위치 정보를 반환하는 클래스.
+    """Returns current location information using IP geolocation.
 
     Parameters
     ----------
-    timeout : HTTP 요청 타임아웃(초). 기본값은 config.CONTEXT_FETCH_TIMEOUT.
+    timeout : HTTP request timeout (seconds). Defaults to config.CONTEXT_FETCH_TIMEOUT.
     """
 
     def __init__(self, timeout: int = cfg.CONTEXT_FETCH_TIMEOUT):
         self.timeout = timeout
         if not _REQUESTS_AVAILABLE:
-            print("[GPSLocator] ⚠ requests 패키지 없음. pip install requests 를 실행하세요.")
+            print("[GPSLocator] ⚠ requests package not found. Run: pip install requests")
 
     def get_location(self) -> Optional[dict]:
-        """현재 IP 기반 위치 정보를 반환합니다.
+        """Return the current IP-based location.
 
         Returns
         -------
         dict | None
-            성공 시: {
+            On success: {
                 "city": str,
                 "country": str,
                 "region": str,
                 "lat": float,
                 "lon": float,
             }
-            실패 시: None
+            On failure: None
         """
         if not _REQUESTS_AVAILABLE:
             return None
@@ -68,27 +68,27 @@ class GPSLocator:
         return self._parse(raw)
 
     def _fetch(self) -> Optional[dict]:
-        """ip-api.com에 HTTP GET 요청을 보내고 원시 JSON을 반환합니다.
+        """Send an HTTP GET request to ip-api.com and return the raw JSON.
 
-        실패 시 None을 반환합니다. 예외를 외부로 전파하지 않습니다.
+        Returns None on failure. Does not propagate exceptions.
         """
         try:
             response = requests.get(cfg.GPS_IP_API_URL, timeout=self.timeout)
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            print(f"[GPSLocator] ❌ 네트워크 오류: {e}")
+            print(f"[GPSLocator] ❌ Network error: {e}")
             return None
 
     def _parse(self, raw: dict) -> Optional[dict]:
-        """원시 API 응답에서 필요한 필드만 추출합니다.
+        """Extract required fields from the raw API response.
 
-        ip-api.com 응답에는 'status' 필드가 있으며,
-        'fail'이면 None을 반환합니다.
+        The ip-api.com response includes a 'status' field.
+        Returns None if status is 'fail'.
         """
         try:
             if raw.get("status") != "success":
-                print(f"[GPSLocator] ❌ API 응답 실패: {raw.get('message', 'unknown')}")
+                print(f"[GPSLocator] ❌ API response failed: {raw.get('message', 'unknown')}")
                 return None
             return {
                 "city": raw["city"],
@@ -98,7 +98,7 @@ class GPSLocator:
                 "lon": float(raw["lon"]),
             }
         except KeyError as e:
-            print(f"[GPSLocator] ❌ 응답 필드 누락: {e}")
+            print(f"[GPSLocator] ❌ Missing response field: {e}")
             return None
 
 
@@ -108,4 +108,4 @@ if __name__ == "__main__":
     if loc:
         print(f"[GPSLocator] ✓ {loc['city']}, {loc['country']} ({loc['lat']}, {loc['lon']})")
     else:
-        print("[GPSLocator] ❌ 위치 조회 실패")
+        print("[GPSLocator] ❌ Location lookup failed")
