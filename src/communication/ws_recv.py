@@ -109,12 +109,22 @@ class WebSocketMicStream:
     # ------------------------------------------------------------------
 
     def open(self) -> None:
-        """Start the WebSocket server in a background thread."""
+        """Start the WebSocket server and HTTP file server in background threads."""
         self._running = True
         self._thread = threading.Thread(target=self._run_server, daemon=True)
         self._thread.start()
-        print(f"🌐 WebSocket server starting on ws://{self._host}:{self._port}/audio")
-        print(f"   Open http://<your-pi-ip>:{self._port}/ on your phone")
+
+        # Start HTTP server for serving index.html on port+1
+        http_port = self._port + 1
+        http_thread = threading.Thread(
+            target=_start_http_server,
+            args=(_APP_HTML, http_port),
+            daemon=True,
+        )
+        http_thread.start()
+
+        print(f"🌐 WebSocket  : ws://{self._host}:{self._port}/audio")
+        print(f"📱 Web app    : http://localhost:{http_port}/  (open in browser)")
 
     def close(self) -> None:
         """Stop the server and background thread."""
@@ -216,13 +226,12 @@ def _start_http_server(html_path: Path, port: int) -> None:
         def log_message(self, fmt, *args):
             pass  # suppress access log noise
 
-    # Use a free port one above the WS port for the HTTP file server
-    http_port = port + 1
     try:
-        with socketserver.TCPServer(("", http_port), _Handler) as httpd:
+        socketserver.TCPServer.allow_reuse_address = True
+        with socketserver.TCPServer(("", port), _Handler) as httpd:
             httpd.serve_forever()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WARN] HTTP server failed on port {port}: {e}")
 
 
 # ---------------------------------------------------------------------------

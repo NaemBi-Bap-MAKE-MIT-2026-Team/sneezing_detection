@@ -22,6 +22,7 @@ python -m src.main
 """
 
 import argparse
+import sys
 import time
 import threading
 import subprocess
@@ -74,9 +75,12 @@ def require(p: Path, label: str):
 def play_bless_wav_async(wav_path: Path) -> None:
     def _run():
         try:
-            subprocess.run(["aplay", "-q", str(wav_path)], check=False)
+            if sys.platform == "darwin":
+                subprocess.run(["afplay", str(wav_path)], check=False)
+            else:
+                subprocess.run(["aplay", "-q", str(wav_path)], check=False)
         except Exception as e:
-            print(f"[WARN] aplay failed: {e}")
+            print(f"[WARN] audio playback failed: {e}")
 
     if wav_path.exists():
         threading.Thread(target=_run, daemon=True).start()

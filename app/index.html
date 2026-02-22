@@ -254,7 +254,8 @@
     let bytesSent   = 0;
     let kbpsTimer   = null;
     let prevBytes   = 0;
-    let accumBuf    = new Float32Array(0);   // partial-frame accumulator
+    let accumBuf    = new Float32Array(0);
+    let _sending    = false;   // true once WebSocket is open and audio should be sent
 
     // ─── UI helpers ───────────────────────────────────────────────────────
     function setStatus(cls, msg) {
@@ -284,15 +285,16 @@
     }
 
     // ─── Connect / Disconnect ─────────────────────────────────────────────
-    btnConnect.addEventListener("click", () => {
+    // Must be async so we can await getUserMedia inside the user-gesture context.
+    btnConnect.addEventListener("click", async () => {
       if (ws) {
         disconnect();
       } else {
-        connect();
+        await connect();
       }
     });
 
-    function connect() {
+    async function connect() {
       const host = inpHost.value.trim();
       const port = parseInt(inpPort.value, 10) || 8080;
 
@@ -302,41 +304,58 @@
       }
 
       btnConnect.disabled = true;
-      setStatus("connecting", "Connecting…");
 
+      // ── Step 1: acquire mic permission NOW, inside the user-gesture context ──
+      // AudioContext + getUserMedia must be called synchronously (or awaited)
+      // before any async network hop, or Chrome will suspend the AudioContext.
+      setStatus("connecting", "Requesting mic…");
+      const ok = await startAudio();
+      if (!ok) {
+        btnConnect.disabled = false;
+        return;
+      }
+
+      // ── Step 2: connect WebSocket ──
+      setStatus("connecting", "Connecting…");
       const url = `ws://${host}:${port}/audio`;
       ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
 
-      ws.onopen = async () => {
+      ws.onopen = () => {
         setStatus("connected", "Connected");
         setConnected(true);
         btnConnect.disabled = false;
         pktCount = 0; bytesSent = 0;
         statPkts.textContent = "0";
         startKbpsTimer();
-        await startAudio();
+        _sending = true;   // audio pipeline already running; start forwarding packets
       };
 
       ws.onclose = (ev) => {
+        _sending = false;
         stopAudio();
         stopKbpsTimer();
-        setStatus("", "Disconnected");
         setConnected(false);
         btnConnect.disabled = false;
         ws = null;
         if (ev.code !== 1000) {
           setStatus("error", `Closed (${ev.code})`);
+        } else {
+          setStatus("", "Disconnected");
         }
       };
 
       ws.onerror = () => {
-        setStatus("error", "Connection failed");
+        _sending = false;
+        stopAudio();
+        setStatus("error", "WS connection failed");
         btnConnect.disabled = false;
+        ws = null;
       };
     }
 
     function disconnect() {
+      _sending = false;
       stopAudio();
       if (ws) {
         ws.close(1000, "user disconnect");
@@ -348,16 +367,19 @@
     }
 
     // ─── Audio capture ────────────────────────────────────────────────────
+    // Returns true on success, false on error.
+    // Call this INSIDE a user-gesture handler (click) to satisfy autoplay policy.
     async function startAudio() {
       try {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)({
           sampleRate: CAPTURE_SR,
           latencyHint: "interactive",
         });
+        // Explicitly resume — Chrome may start AudioContext in suspended state.
+        await audioCtx.resume();
 
         micStream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            sampleRate: CAPTURE_SR,
             channelCount: 1,
             echoCancellation: false,
             noiseSuppression: false,
@@ -371,26 +393,28 @@
         accumBuf   = new Float32Array(0);
 
         scriptNode.onaudioprocess = (ev) => {
-          const input  = ev.inputBuffer.getChannelData(0);
+          const input = ev.inputBuffer.getChannelData(0);
+
+          // VU meter (always active once mic is running)
+          let sum = 0;
+          for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+          const pct = Math.min(100, Math.sqrt(sum / input.length) * 400);
+          vuFill.style.width = pct.toFixed(1) + "%";
+
+          if (!_sending) return;   // WebSocket not open yet — VU meter still works
+
+          // Accumulate and drain in FRAME_SAMPLES chunks
           const merged = new Float32Array(accumBuf.length + input.length);
           merged.set(accumBuf);
           merged.set(input, accumBuf.length);
           accumBuf = merged;
 
-          // RMS for VU meter (on full input block)
-          let rmsVal = 0;
-          for (let i = 0; i < input.length; i++) rmsVal += input[i] * input[i];
-          const pct = Math.min(100, Math.sqrt(rmsVal / input.length) * 400);
-          vuFill.style.width = pct.toFixed(1) + "%";
-
-          // Drain accumulator in FRAME_SAMPLES chunks
           while (accumBuf.length >= FRAME_SAMPLES) {
             const frame = accumBuf.slice(0, FRAME_SAMPLES);
             accumBuf    = accumBuf.slice(FRAME_SAMPLES);
 
             if (ws && ws.readyState === WebSocket.OPEN) {
-              // Send raw float32 little-endian bytes — same as UDP send.py
-              ws.send(frame.buffer);
+              ws.send(frame.buffer);   // raw float32 LE — same as UDP send.py
               pktCount++;
               bytesSent += frame.buffer.byteLength;
               statPkts.textContent = pktCount.toString();
@@ -400,11 +424,13 @@
 
         srcNode.connect(scriptNode);
         scriptNode.connect(audioCtx.destination);
+        return true;
 
       } catch (err) {
-        setStatus("error", "Mic error: " + err.message);
-        setConnected(false);
-        if (ws) { ws.close(); ws = null; }
+        setStatus("error", "Mic: " + err.message);
+        if (audioCtx) { audioCtx.close(); audioCtx = null; }
+        micStream = null;
+        return false;
       }
     }
 
