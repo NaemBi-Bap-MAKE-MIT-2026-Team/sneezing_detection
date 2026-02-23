@@ -138,7 +138,8 @@ class BlessYouFlow:
         wav_queue: list[Path] = []
         for i, msg in enumerate(messages):
             wav_path = self._tts_output_dir / f"tts_bless_you_{i:02d}.wav"
-            result = self._tts.speak(msg, save=True, play=False, save_as=wav_path)
+            tts_text = f"Bless you! {msg}"
+            result = self._tts.speak(tts_text, save=True, play=False, save_as=wav_path)
             if result:
                 wav_queue.append(result)
                 print(f"[BlessYouFlow]   [{i+1}/{len(messages)}] ✓ {wav_path.name}")
