@@ -148,9 +148,9 @@ class ElevenLabsTTSPlayer:
     def _find_player(self) -> Optional[list]:
         """Auto-detect an available audio player command."""
         player_commands = [
+            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"],
             ["aplay", "-q"],
             ["mpg123", "-q"],
-            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"],
         ]
         for cmd in player_commands:
             try:
